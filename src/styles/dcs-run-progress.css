@@ -1,0 +1,287 @@
+/* FE-04 run progress — dimension stage tiles (Foundation + 7 dimensions) */
+
+.dcs-stage-grid {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 1024px) {
+  .dcs-stage-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .dcs-stage-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+}
+
+/* Do not set min column width globally — constrained parents (Overview hero) overflow otherwise */
+
+.dcs-stage-tile {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  padding: 10px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border, #e8e4d9);
+  background: var(--color-elevated, #fdfcf8);
+  box-shadow: 0 1px 2px rgb(22 22 26 / 0.04);
+  overflow: hidden;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.dcs-stage-tile__label {
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: rgb(22 22 26 / 0.62);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+  min-height: 2.75rem;
+}
+
+.dcs-stage-tile__status {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgb(22 22 26 / 0.5);
+}
+
+.dcs-stage-tile__fails {
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-loss, #b91c1c);
+}
+
+.dcs-stage-tile__copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  min-width: 0;
+}
+
+.dcs-stage-tile__kicker {
+  display: block;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgb(22 22 26 / 0.45);
+  margin-bottom: 2px;
+}
+
+.dcs-stage-tile__reason p,
+.dcs-stage-tile__next p {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgb(22 22 26 / 0.72);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dcs-stage-tile__waiting {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: rgb(22 22 26 / 0.55);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dcs-stage-tile--failed .dcs-stage-tile__reason p {
+  color: rgb(185 28 28 / 0.9);
+}
+
+.dcs-stage-tile--failed .dcs-stage-tile__next p {
+  color: rgb(22 22 26 / 0.7);
+}
+
+/* State rings — inset so tiles do not overlap neighbors */
+.dcs-stage-tile--pending {
+  border-color: var(--color-border, #e8e4d9);
+}
+
+.dcs-stage-tile--running {
+  border-color: rgb(255 91 61 / 0.45);
+  box-shadow:
+    0 0 0 2px rgb(255 91 61 / 0.28),
+    0 1px 2px rgb(22 22 26 / 0.04);
+}
+
+.dcs-stage-tile--running .dcs-stage-tile__status {
+  color: var(--color-spark, #ff5b3d);
+}
+
+.dcs-stage-tile--passed {
+  border-color: rgb(46 136 87 / 0.35);
+  box-shadow:
+    0 0 0 2px rgb(46 136 87 / 0.22),
+    0 1px 2px rgb(22 22 26 / 0.04);
+}
+
+.dcs-stage-tile--passed .dcs-stage-tile__status {
+  color: var(--color-revenue, #2e8857);
+}
+
+.dcs-stage-tile--failed {
+  border-color: rgb(185 28 28 / 0.35);
+  box-shadow:
+    0 0 0 2px rgb(185 28 28 / 0.2),
+    0 1px 2px rgb(22 22 26 / 0.04);
+}
+
+.dcs-stage-tile--failed .dcs-stage-tile__status {
+  color: var(--color-loss, #b91c1c);
+}
+
+.dcs-stage-tile--skipped {
+  border-style: dashed;
+  border-color: var(--color-border, #e8e4d9);
+  opacity: 0.55;
+}
+
+.dcs-run-progress-card {
+  margin-top: 1.5rem;
+  border-radius: 12px;
+  border: 1px solid var(--color-border, #e8e4d9);
+  background: var(--color-elevated, #fdfcf8);
+  box-shadow: 0 1px 3px rgb(22 22 26 / 0.06);
+}
+
+.dcs-run-progress-card__head {
+  border-bottom: 1px solid var(--color-border, #e8e4d9);
+  padding: 1rem 1.25rem;
+}
+
+.dcs-run-progress-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-foreground, #16161a);
+}
+
+.dcs-run-progress-card__sub {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: rgb(22 22 26 / 0.55);
+}
+
+.dcs-run-progress-card__body {
+  padding: 1rem 1.25rem;
+  min-width: 0;
+}
+
+/* Overview CMO hero — 4×2 grid so tiles stay readable in the middle column */
+.overview-panel .ov-cmo-dims .dcs-stage-grid {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 10px;
+  align-content: stretch;
+}
+
+@media (min-width: 768px) {
+  .overview-panel .ov-cmo-dims .dcs-stage-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile {
+  min-height: 118px;
+  height: 100%;
+  padding: 11px 12px;
+  background: rgb(245 242 235 / 0.06);
+  border-color: rgb(245 242 235 / 0.14);
+  box-shadow: none;
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile__label {
+  color: rgb(245 242 235 / 0.78);
+  min-height: 0;
+  max-width: 100%;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: manual;
+  line-height: 1.35;
+  font-size: 11px;
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile__status {
+  color: rgb(245 242 235 / 0.45);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile__fails {
+  color: #f87171;
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile__kicker {
+  color: rgb(245 242 235 / 0.4);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile__reason p,
+.overview-panel .ov-cmo-dims .dcs-stage-tile__next p {
+  color: rgb(245 242 235 / 0.72);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--failed .dcs-stage-tile__reason p {
+  color: #fca5a5;
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile__waiting {
+  color: rgb(245 242 235 / 0.5);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--running {
+  border-color: rgb(255 91 61 / 0.5);
+  box-shadow: inset 0 0 0 1px rgb(255 91 61 / 0.35);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--running .dcs-stage-tile__status {
+  color: var(--ov-spark, #ff5b3d);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--passed {
+  border-color: rgb(46 136 87 / 0.45);
+  box-shadow: inset 0 0 0 1px rgb(46 136 87 / 0.3);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--passed .dcs-stage-tile__status {
+  color: var(--ov-good, #2e8857);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--failed {
+  border-color: rgb(248 113 113 / 0.45);
+  box-shadow: inset 0 0 0 1px rgb(248 113 113 / 0.3);
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--failed .dcs-stage-tile__status {
+  color: #f87171;
+}
+
+.overview-panel .ov-cmo-dims .dcs-stage-tile--skipped {
+  border-color: rgb(245 242 235 / 0.18);
+  opacity: 0.5;
+}
