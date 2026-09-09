@@ -14,9 +14,15 @@ import {
   type CarouselApi,
 } from "@/components/ui/carousel";
 import { apiRequest } from "@/lib/api";
-import { DCS_STATUS_QUERY_KEY } from "@/lib/app-access";
+import {
+  DCS_STATUS_STALE_MS,
+  refreshAfterOnboardingConnect,
+  refreshConnectorsThenDcsStatus,
+} from "@/lib/app-access";
 import {
   getApiErrorMessage,
+  isConnectorBootstrapInFlight,
+  listConnectors,
   shopifyErrorReasonMessage,
   startShopifyOAuth,
 } from "@/lib/connectors";
@@ -50,7 +56,12 @@ export const Route = createFileRoute("/onboarding")({
     reason: typeof search.reason === "string" ? search.reason : undefined,
     step: typeof search.step === "string" ? search.step : undefined,
   }),
-  beforeLoad: ({ search }) => requireOnboarding(search),
+  beforeLoad: async ({ search, context }) => {
+    if (search.shopify === "connected") {
+      await refreshAfterOnboardingConnect(context.queryClient);
+    }
+    await requireOnboarding(search);
+  },
   head: () => ({ meta: [{ title: "Connect your stack — Klints" }] }),
   component: Onboarding,
 });
@@ -236,6 +247,23 @@ function Onboarding() {
   const [shopifyLoading, setShopifyLoading] = useState(false);
   const [shopifyError, setShopifyError] = useState<string | null>(null);
 
+  const { data: connectors } = useQuery({
+    queryKey: ["connectors"],
+    queryFn: listConnectors,
+    staleTime: DCS_STATUS_STALE_MS,
+    refetchInterval: (query) =>
+      isConnectorBootstrapInFlight(query.state.data) ? DCS_STATUS_STALE_MS : false,
+  });
+  const bootstrapPending = isConnectorBootstrapInFlight(connectors);
+  const wasBootstrapPendingRef = useRef(false);
+
+  useEffect(() => {
+    if (wasBootstrapPendingRef.current && !bootstrapPending) {
+      void refreshConnectorsThenDcsStatus(queryClient);
+    }
+    wasBootstrapPendingRef.current = bootstrapPending;
+  }, [bootstrapPending, queryClient]);
+
   const { data: currentUser } = useQuery({
     queryKey: ["auth", "me"],
     queryFn: getCurrentUser,
@@ -258,9 +286,7 @@ function Onboarding() {
   async function goToAppHomeAfterConnect(source: "skip" | "save") {
     traceManagoV3Onboarding("goToAppHomeAfterConnect", { source });
     clearManagoV3OnboardingPending();
-    await queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
-    await queryClient.invalidateQueries({ queryKey: ["connectors"] });
-    await queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
+    await refreshAfterOnboardingConnect(queryClient);
     void navigate({ to: "/dashboard", replace: true });
   }
 
@@ -376,6 +402,7 @@ function Onboarding() {
       traceManagoV3Onboarding("post-manago-connect: success", {
         pathname: window.location.pathname,
       });
+      await refreshConnectorsThenDcsStatus(queryClient);
       markManagoV3OnboardingPending();
       setActive("manago_api_v3");
       syncOnboardingManagoV3Url();

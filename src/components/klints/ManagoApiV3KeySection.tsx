@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { DCS_STATUS_QUERY_KEY } from "@/lib/app-access";
+import { refreshConnectorsThenDcsStatus } from "@/lib/app-access";
 import {
   type Connector,
   getApiErrorMessage,
@@ -38,8 +38,7 @@ export function ManagoApiV3KeySection({ connector, canManage }: ManagoApiV3KeySe
   const [removeOpen, setRemoveOpen] = useState(false);
 
   const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["connectors"] });
-    void queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
+    void refreshConnectorsThenDcsStatus(queryClient);
   };
 
   const removeMutation = useMutation({

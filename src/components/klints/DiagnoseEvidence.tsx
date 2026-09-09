@@ -11,6 +11,7 @@ import {
   type DcsWorklistIssueDetail,
 } from "@/lib/dcs";
 import { Link2 } from "lucide-react";
+import { AiExplainFindingBox } from "@/components/klints/AiExplainFindingBox";
 
 function SectionLabel({
   num,
@@ -212,8 +213,19 @@ function ApiDiagnoseEvidence({
           <p className="text-[13px] leading-relaxed text-[rgb(22_22_26/0.72)]">
             {explanation}
           </p>
+          <AiExplainFindingBox
+            checkId={detail.check_id}
+            dcsRunId={detail.data_run_id}
+            enabled={Boolean(detail.check_id)}
+          />
         </section>
-      ) : null}
+      ) : (
+        <AiExplainFindingBox
+          checkId={detail.check_id}
+          dcsRunId={detail.data_run_id}
+          enabled={Boolean(detail.check_id)}
+        />
+      )}
 
       <EvidenceTable
         items={detail.mismatches}

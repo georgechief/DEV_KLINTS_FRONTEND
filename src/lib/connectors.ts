@@ -11,6 +11,10 @@ export type LatestBootstrap = {
   finished_at: string | null;
 };
 
+export type LastDataRefresh = LatestBootstrap & {
+  source: "bootstrap" | "dcs_fresh_import";
+};
+
 export type Connector = {
   id: string;
   name: string; // "manago_ai" | "shopify"
@@ -20,6 +24,8 @@ export type Connector = {
   config: Record<string, unknown>;
   created_at: string;
   latest_bootstrap: LatestBootstrap | null;
+  /** Newest bootstrap or DCS fresh import (PRD-DCS-10 Slice F). */
+  last_data_refresh: LastDataRefresh | null;
   /** Present on Manago connectors from list API (PRD-CONN-06). */
   has_api_v3_key?: boolean;
 };
@@ -52,6 +58,127 @@ export function shopifyAuthFailureMessage(
   const reason = config.auth_failure_reason;
   if (typeof reason !== "string" || !reason.trim()) return null;
   return SHOPIFY_AUTH_FAILURE_MESSAGES[reason] ?? "Reconnect required to restore Shopify access.";
+}
+
+/** Prefer Slice F refresh stats; fall back to bootstrap-only payload. */
+export function connectorLastDataRefresh(
+  connector: Connector | null | undefined,
+): LastDataRefresh | null {
+  if (connector?.last_data_refresh) return connector.last_data_refresh;
+  const bootstrap = connector?.latest_bootstrap;
+  if (!bootstrap) return null;
+  return { ...bootstrap, source: "bootstrap" };
+}
+
+/** Honest stub marker from GAP-01F seed (present in masked list config). */
+export const GAP01F_DEMO_SEED_CONFIG_MARKER = "gap01f_demo_seed";
+
+export function isGap01fDemoSeedConnector(
+  connector: Connector | null | undefined,
+): boolean {
+  const marker = connector?.config?.[GAP01F_DEMO_SEED_CONFIG_MARKER];
+  return marker === true || marker === "true";
+}
+
+/** Compact lag since last sync — GAP-01E W8-03 (no fake latency). */
+export function formatConnectorSyncLag(
+  finishedAt: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (!finishedAt) return "—";
+  const finished = new Date(finishedAt);
+  if (Number.isNaN(finished.getTime())) return "—";
+  const ms = now.getTime() - finished.getTime();
+  if (ms < 0) return "—";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 48) return `${hr}h`;
+  return `${Math.floor(hr / 24)}d`;
+}
+
+export type ConnectorSyncHealth = {
+  finishedAt: string | null;
+  inFlight: boolean;
+  lagLabel: string;
+  issueCount: number;
+  badge: string;
+};
+
+/**
+ * Merchant sync health from connector list payload (GAP-01E W8-03 / E0.3).
+ * Uses last_data_refresh / bootstrap only — no invented webhook counts.
+ * GAP-01F demo stubs never claim Healthy (offline seed ≠ live sync).
+ */
+export function connectorSyncHealth(
+  connector: Connector,
+  now: Date = new Date(),
+): ConnectorSyncHealth {
+  const refresh = connectorLastDataRefresh(connector);
+  const finishedAt = refresh?.finished_at ?? null;
+  const inFlight =
+    refresh?.data_run_status === "pending" ||
+    refresh?.data_run_status === "running";
+  const issueCount =
+    typeof refresh?.issue_count === "number" && Number.isFinite(refresh.issue_count)
+      ? Math.max(0, Math.trunc(refresh.issue_count))
+      : 0;
+
+  const status = (connector.status || "").toLowerCase();
+  const summary = (refresh?.summary_status || "").toLowerCase();
+  const demoStub = isGap01fDemoSeedConnector(connector);
+
+  let badge = "Healthy";
+  if (status === "error" || summary === "error" || refresh?.data_run_status === "failed") {
+    badge = "Error";
+  } else if (demoStub) {
+    // Offline seed may have finished_at from patched import — still not live OAuth sync.
+    badge = "Demo";
+  } else if (inFlight) {
+    badge = "Syncing";
+  } else if (!finishedAt) {
+    // Connected but never completed a refresh — do not claim Healthy.
+    badge = "No sync";
+  } else if (status === "degraded" || summary === "degraded" || issueCount > 0) {
+    badge = "Degraded";
+  }
+
+  return {
+    finishedAt,
+    inFlight: demoStub ? false : inFlight,
+    // Demo stubs use "offline seed" only when healthy enough to show Demo badge.
+    // Failed import → Error badge with real lag (not contradictory "offline seed").
+    lagLabel:
+      demoStub && badge !== "Error"
+        ? "offline seed"
+        : inFlight && !finishedAt
+          ? "—"
+          : formatConnectorSyncLag(finishedAt, now),
+    issueCount,
+    badge,
+  };
+}
+
+/** Last-sync copy: prefer finished_at; only say Syncing when no prior finish. */
+export function connectorLastSyncDisplayKind(
+  health: Pick<ConnectorSyncHealth, "finishedAt" | "inFlight">,
+): "when" | "syncing" | "never" {
+  if (health.finishedAt) return "when";
+  if (health.inFlight) return "syncing";
+  return "never";
+}
+
+/** True while any connector bootstrap import is still pending/running. */
+export function isConnectorBootstrapInFlight(
+  connectors: Connector[] | null | undefined,
+): boolean {
+  if (!connectors?.length) return false;
+  return connectors.some((connector) => {
+    const status = connectorLastDataRefresh(connector)?.data_run_status;
+    return status === "pending" || status === "running";
+  });
 }
 
 export function maskedConfigString(

@@ -56,7 +56,7 @@ export const workflows = [
     revenue: 12000,
     active: 3,
     status: "Running",
-    description: "Re-rank agent relevance set using Shopify cost/margin floor ≥ 38%.",
+    description: "Re-rank Manago relevance set using Shopify cost/margin floor ≥ 38%.",
   },
   {
     id: "wf-second-purchase",
@@ -137,7 +137,7 @@ export const issues: GovernanceIssue[] = [
     owner: "tomas.l",
     confidence: 95,
     dimension: "Business Reality",
-    suggestedAction: "Sync Shopify cost/margin and re-rank within agent relevance set.",
+    suggestedAction: "Sync Shopify cost/margin and re-rank within Manago relevance set.",
     workflowId: "wf-margin-rerank",
     createdAt: "3d ago",
     ageHours: 72,
@@ -228,7 +228,7 @@ export const activityFeed = [
     time: "2d ago",
     tone: "revenue" as const,
     actor: "system",
-    text: "Eval pass · agent.handoff.margin_rerank.v2 · 47/49 tests",
+    text: "Eval pass · handoff.margin_rerank.v2 · 47/49 tests",
     meta: "good",
   },
   {
@@ -329,7 +329,7 @@ export const fixFlowStages = [
   { phase: 2, key: "fix", label: "Fix", short: "Fix", to: "/fix" },
   { phase: 3, key: "build", label: "Build", short: "Workflow Studio", to: "/workflow" },
   { phase: 4, key: "qa", label: "QA", short: "QA validation", to: "/qa" },
-  { phase: 5, key: "handoff", label: "Handoff", short: "Agent handoff", to: "/handoff" },
+  { phase: 5, key: "handoff", label: "Handoff", short: "Handoff", to: "/handoff" },
 ] as const;
 
 export const dataConsistency = {
@@ -723,7 +723,7 @@ export const fixBlueprints: FixBlueprint[] = [
     expectedRecovery: 12000,
     riskReduction: 18,
     effort: "Low",
-    description: "Keep agent relevance; inject catalog cost/margin from Shopify; floor ≥ 38%.",
+    description: "Keep Manago relevance; inject catalog cost/margin from Shopify; floor ≥ 38%.",
   },
 ];
 
@@ -778,7 +778,7 @@ export type IssueEvidence = {
   /** 3 · Source-of-truth rows */
   sources: { element: string; connector: string; value: string }[];
   mismatches: string[];
-  /** + · What Klints adds before the agent acts */
+  /** + · What Klints adds before Manago activation */
   klintsAdds: string;
   /** 4 · Per-element fix recommendations */
   fixes: { tag: string; body: string }[];
@@ -816,7 +816,7 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     ],
     mismatches: ["Offer mismatch · Shopify ↔ Manago", "Message mismatch · pop-up ↔ landing"],
     klintsAdds:
-      "The ad creative and landing promise live outside the CDP. Klints reads both and hands the agent one consistent offer to act on. The agent owns the workflow; Klints owns the cross-stack context.",
+      "The ad creative and landing promise live outside the CDP. Klints reads both and packages one consistent offer for Manago.ai. Manago owns the workflow; Klints owns the cross-stack context.",
     fixes: [
       {
         tag: "Pop-up",
@@ -832,11 +832,11 @@ export const issueEvidence: Record<string, IssueEvidence> = {
       },
       {
         tag: "Lifecycle",
-        body: "Verify on-site capture tags the contact and fills required properties so the lifecycle entry the agent builds triggers on clean data.",
+        body: "Verify on-site capture tags the contact and fills required properties so the lifecycle entry Manago builds triggers on clean data.",
       },
     ],
     nextStep:
-      "Open the guided fix flow — review each per-element recommendation, approve it, and write the aligned offer back so the agent acts on one consistent promise.",
+      "Open the guided fix flow — review each per-element recommendation, approve it, and write the aligned offer back so Manago acts on one consistent promise.",
     writeback: "UTM-scoped pop-up offer to 30% for campaign traffic only; keep 10% baseline elsewhere.",
     runId: "R#148",
     impactRibbon: {
@@ -852,7 +852,7 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     readinessChip: "Lifecycle never starts",
   },
   "iss-untapped": {
-    provenanceTitle: "The agent answers questions. Klints asks the ones nobody thinks to ask.",
+    provenanceTitle: "Manago.ai answers questions. Klints asks the ones nobody thinks to ask.",
     problem:
       "Segment repeat_no_loyalty — 1,247 contacts with 2+ purchases, no active subscription, and zero lifecycle workflow coverage — carries revenue potential with no workflow targeting them.",
     cause:
@@ -865,7 +865,7 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     ],
     mismatches: ["Coverage gap · second purchase entry"],
     klintsAdds:
-      "Klints hands the Manago.ai agent a validated segment definition, a data-ready workflow brief, and a confirmed collision check. Klints surfaces it, validates it, and briefs it — the agent builds; you activate.",
+      "Klints stages a validated segment definition, a data-ready workflow brief, and a confirmed collision check for the Manago.ai agent (external). Klints surfaces it, validates it, and packages it — Manago builds; you activate.",
     fixes: [
       {
         tag: "Segment",
@@ -881,8 +881,8 @@ export const issueEvidence: Record<string, IssueEvidence> = {
       },
     ],
     nextStep:
-      "Data is ready. Continue to Build to package the Second Purchase Accelerator blueprint for the agent.",
-    writeback: "No writeback — hand Second Purchase Accelerator blueprint to the agent.",
+      "Data is ready. Continue to Build to package the Second Purchase Accelerator blueprint for staged handoff.",
+    writeback: "No writeback — stage Second Purchase Accelerator blueprint for Manago.ai handoff.",
     runId: "R#148",
     impactRibbon: {
       impactLabel: "Revenue opportunity",
@@ -910,7 +910,7 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     ],
     mismatches: ["Identity split · cluster confidence 0.93", "LTV understated on each profile"],
     klintsAdds:
-      "Klints resolves the link in commerce/payment layers and writes a unified view back into both contacts. Klints never auto-merges — it proposes a cluster with evidence for human approval. Identity integrity precedes agentic execution.",
+      "Klints resolves the link in commerce/payment layers and writes a unified view back into both contacts. Klints never auto-merges — it proposes a cluster with evidence for human approval. Identity integrity precedes staged handoff.",
     fixes: [
       {
         tag: "Policy ≥ 0.90",
@@ -946,9 +946,9 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     readinessChip: "Needs human approval",
   },
   "iss-margin": {
-    provenanceTitle: "The agent knows what sells. It does not know what earns.",
+    provenanceTitle: "Manago.ai knows what sells. It does not know what earns.",
     problem:
-      "Recommendations optimise revenue/relevance only. Shopify cost/margin never reaches the agent, so equally relevant high-margin SKUs lose to low-margin bestsellers.",
+      "Recommendations optimise revenue/relevance only. Shopify cost/margin never reaches Manago.ai, so equally relevant high-margin SKUs lose to low-margin bestsellers.",
     cause:
       "Manago.ai ranks on behavioural and transactional data — what sells. Margin lives in Shopify/catalog cost fields the CDP never sees. Workflows convert, but on turnover instead of profit.",
     sources: [
@@ -958,11 +958,11 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     ],
     mismatches: ["Margin blind · CDP relevance set", "Profit leak on low-margin SKUs"],
     klintsAdds:
-      "Klints never recommends a product just for its margin. It takes only SKUs the agent already judged relevant, then re-ranks within that set with a margin floor — nothing irrelevant is introduced.",
+      "Klints never recommends a product just for its margin. It takes only SKUs Manago already judged relevant, then re-ranks within that set with a margin floor — nothing irrelevant is introduced.",
     fixes: [
       {
         tag: "Sync",
-        body: "Inject Shopify cost/margin into the agent relevance set.",
+        body: "Inject Shopify cost/margin into the Manago relevance set.",
       },
       {
         tag: "Floor",
@@ -1001,7 +1001,7 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     ],
     mismatches: ["Double-send risk · 7-day overlap"],
     klintsAdds:
-      "Klints surfaces the collision before handoff so the agent never ships overlapping sends. This is a governance fix — no customer field writeback.",
+      "Klints surfaces the collision before handoff so Manago never ships overlapping sends. This is a governance fix — no customer field writeback.",
     fixes: [
       {
         tag: "Exclusivity",
@@ -1039,7 +1039,7 @@ export const issueEvidence: Record<string, IssueEvidence> = {
     ],
     mismatches: ["Webhook latency · measurement drift"],
     klintsAdds:
-      "Klints tracks latency in the Measurement dimension and recommends holding same-day triggers until the order settles — so the agent never acts on a ghost unpaid state.",
+      "Klints tracks latency in the Measurement dimension and recommends holding same-day triggers until the order settles — so Manago never acts on a ghost unpaid state.",
     fixes: [
       {
         tag: "Hold",
@@ -1097,7 +1097,7 @@ export const fixPlans: Record<string, FixPlan> = {
     mode: "approve",
     kv: [
       { k: "What changes", v: "Pop-up offer rule on summer-campaign URL · raised to match the ad" },
-      { k: "Where it changes", v: "Manago.ai pop-up config (A2A) · campaign UTM scope only" },
+      { k: "Where it changes", v: "Manago.ai pop-up config · campaign UTM scope only" },
       { k: "Scope", v: "Campaign traffic only · non-campaign visitors keep 10% baseline" },
       { k: "Approval owner", v: "Anton Král · Growth Lead" },
       { k: "Rollback", v: "Available · revert to prior pop-up rule · audit-tracked" },
@@ -1131,7 +1131,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Source evidence", v: "Shopify · Manago.ai" },
     ],
     testBadge: "Sandboxed test complete · 3/3 elements mapped · 0 conflicts",
-    ctaLabel: "Approve fix → Proceed to Workflow Studio",
+    ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-identity": {
     eyebrow: "Identity cluster · ready for approval",
@@ -1176,19 +1176,19 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Source evidence", v: "Shopify · payment gateway" },
     ],
     testBadge: "Sandboxed test complete · 100/100 clusters written to sandbox · 0 conflicts",
-    ctaLabel: "Approve fix → Proceed to Workflow Studio",
+    ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-margin": {
     eyebrow: "Margin re-rank · ready for approval",
     title: "Connect margin source & approve the re-rank",
     summary:
-      "The agent recommends relevant products but optimises revenue, not profit. Connect Shopify cost/margin and approve the re-rank — Klints keeps only the agent's relevant products and favours profit within them. Nothing irrelevant is ever introduced.",
+      "The Manago.ai agent recommends relevant products but optimises revenue, not profit. Connect Shopify cost/margin and approve the re-rank — Klints keeps only Manago’s relevant products and favours profit within them. Nothing irrelevant is ever introduced.",
     changeSetId: "chg_lumera_margin_051",
     mode: "approve",
     kv: [
       { k: "What changes", v: "Recommendation ranking · re-ordered by margin within relevance" },
-      { k: "Where it changes", v: "Recommendation spec delivered to Manago.ai agent (A2A)" },
-      { k: "Relevance guard", v: "never below agent relevance 0.70 · never irrelevant" },
+      { k: "Where it changes", v: "Recommendation spec staged for Manago.ai (human activation)" },
+      { k: "Relevance guard", v: "never below Manago relevance 0.70 · never irrelevant" },
       { k: "Margin floor", v: "shopify.sku.margin ≥ 0.38" },
       { k: "Approval owner", v: "Tomáš Liška · CRM Manager" },
       { k: "Change set ID", v: "chg_lumera_margin_051" },
@@ -1199,11 +1199,11 @@ export const fixPlans: Record<string, FixPlan> = {
       { label: "Source connected", status: "current" },
       { label: "Re-rank tested", status: "pending" },
       { label: "Approved", status: "pending" },
-      { label: "Delivered to agent", status: "pending" },
+      { label: "Staged for handoff", status: "pending" },
     ],
     previewTitle: "Re-rank preview · relevant × profitable",
-    previewHelper: "Klints re-ranks within the agent's relevant set to favour margin — same relevance, higher profit.",
-    previewColumns: ["Product", "Relevance", "Margin", "Agent rank", "Klints rank"],
+    previewHelper: "Klints re-ranks within Manago’s relevant set to favour margin — same relevance, higher profit.",
+    previewColumns: ["Product", "Relevance", "Margin", "Manago rank", "Klints rank"],
     previewRows: [
       ["Repair Serum 30ml", "0.88", "41%", "#4", "#1 ↑"],
       ["Night Cream 50ml", "0.84", "38%", "#5", "#2 ↑"],
@@ -1211,17 +1211,17 @@ export const fixPlans: Record<string, FixPlan> = {
       ["Discount Bundle", "0.79", "6%", "#3", "dropped"],
     ],
     govHead:
-      "Klints never recommends a product just for its margin. The re-rank operates only within the agent's relevant set, and is human-approved before delivery.",
+      "Klints never recommends a product just for its margin. The re-rank operates only within Manago’s relevant set, and is human-approved before staged handoff.",
     gov: [
       { k: "Approval owner", v: "Tomáš Liška · CRM Manager" },
-      { k: "Production target", v: "Manago.ai agent (A2A)" },
+      { k: "Production target", v: "Manago.ai agent (external · human activation)" },
       { k: "Relevance guard", v: "≥ 0.70" },
       { k: "Margin floor", v: "≥ 0.38" },
       { k: "Audit mode", v: "Append-only · signed log" },
       { k: "Source evidence", v: "Manago.ai agent · Shopify" },
     ],
     testBadge: "Sandboxed test complete · 340 SKUs scored · relevance preserved · 0 below floor",
-    ctaLabel: "Approve fix → Proceed to Workflow Studio",
+    ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-untapped": {
     eyebrow: "Data confirmed · no fix required",
@@ -1234,7 +1234,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Segment", v: "repeat_no_loyalty · 1,247 contacts" },
       { k: "Revenue opportunity", v: "€46,000 / quarter" },
       { k: "Data readiness", v: "All required fields confirmed ✓" },
-      { k: "Collision check", v: "No conflicts · confirmed via A2A query" },
+      { k: "Collision check", v: "No conflicts · confirmed before handoff" },
       { k: "Data consistency", v: "73 · above 70 build threshold" },
       { k: "Workflow brief", v: "second_purchase_accelerator_v1" },
     ],
@@ -1257,7 +1257,7 @@ export const fixPlans: Record<string, FixPlan> = {
       ["ad_audience_membership", "Meta", "0 of 1,247", "OK"],
     ],
     govHead:
-      "No production writeback. Klints cleared the segment for build — the agent will receive a validated brief once you continue to Workflow Studio.",
+      "No production writeback. Klints cleared the segment for build — you will stage a validated brief for Manago once you continue to Workflow Studio.",
     gov: [
       { k: "Approval owner", v: "Tomáš Liška · CRM Manager" },
       { k: "Production target", v: "Workflow brief only" },
@@ -1273,12 +1273,12 @@ export const fixPlans: Record<string, FixPlan> = {
     eyebrow: "Governance collision · ready for approval",
     title: "Resolve winback / lapse exit-window overlap",
     summary:
-      "winback_60d and lapse_90d both fire in a 7-day overlap. Approve exclusivity so the agent never double-sends. No customer field writeback.",
+      "winback_60d and lapse_90d both fire in a 7-day overlap. Approve exclusivity so Manago never double-sends. No customer field writeback.",
     changeSetId: "chg_lumera_conflict_019",
     mode: "approve",
     kv: [
       { k: "What changes", v: "Exit-window exclusivity rule between winback_60d and lapse_90d" },
-      { k: "Where it changes", v: "Manago.ai workflow governance (A2A)" },
+      { k: "Where it changes", v: "Manago.ai workflow governance" },
       { k: "Scope", v: "7-day overlap window only" },
       { k: "Approval owner", v: "Mara Evstratova · Head of CRM" },
       { k: "Rollback", v: "Available · prior exclusivity rules" },
@@ -1306,10 +1306,10 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Customer writeback", v: "None" },
       { k: "Audit mode", v: "Append-only · signed log" },
       { k: "Current state", v: "Awaiting approval" },
-      { k: "Source evidence", v: "Manago.ai A2A" },
+      { k: "Source evidence", v: "Manago.ai" },
     ],
     testBadge: "Sandboxed test complete · collision resolved in sandbox · 0 double-sends",
-    ctaLabel: "Approve fix → Proceed to Workflow Studio",
+    ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-sync": {
     eyebrow: "Measurement latency · ready for approval",
@@ -1320,7 +1320,7 @@ export const fixPlans: Record<string, FixPlan> = {
     mode: "approve",
     kv: [
       { k: "What changes", v: "Same-day trigger hold until order settlement" },
-      { k: "Where it changes", v: "Manago.ai trigger policy (A2A)" },
+      { k: "Where it changes", v: "Manago.ai trigger policy" },
       { k: "Scope", v: "~6% of paid orders in latency tail" },
       { k: "Approval owner", v: "Anton Král · Growth Lead" },
       { k: "Rollback", v: "Available · prior trigger timing" },
@@ -1351,7 +1351,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Source evidence", v: "Shopify · Manago.ai" },
     ],
     testBadge: "Sandboxed test complete · hold policy validated · 0 premature fires",
-    ctaLabel: "Approve fix → Proceed to Workflow Studio",
+    ctaLabel: "Proceed to Workflow Studio",
   },
 };
 
@@ -1374,7 +1374,7 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
     builtFrom:
       "Klints built this entry-alignment workflow from the campaign fix you approved — the corrected offer rule, UTM-scoped, so the lifecycle entry is triggered on one consistent promise.",
     touchpoints: ["Pop-up", "Landing", "Email", "Contact data", "Consent", "Funnel stage"],
-    connected: ["Manago.ai agent · A2A", "Shopify · campaign + landing", "On-site capture"],
+    connected: ["Manago.ai agent · handoff target", "Shopify · campaign + landing", "On-site capture"],
     identity: [
       { k: "Name", v: "Campaign Promise Alignment" },
       { k: "Version", v: "v1.0.0" },
@@ -1412,7 +1412,7 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
     builtFrom:
       "Klints built this identity-cluster workflow from the fix you approved — the clustering policy (confidence ≥ 0.90, no auto-merge) that resolves guest and Apple Pay relay contacts to one person.",
     touchpoints: ["Contact data", "Loyalty", "Funnel stage", "Consent", "Key Information", "Email"],
-    connected: ["Manago.ai agent · A2A", "Shopify · orders + checkout", "Payment fingerprint"],
+    connected: ["Manago.ai agent · handoff target", "Shopify · orders + checkout", "Payment fingerprint"],
     identity: [
       { k: "Name", v: "Identity Cluster Unification" },
       { k: "Version", v: "v1.0.0" },
@@ -1446,11 +1446,11 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
   },
   "iss-margin": {
     headTitle: "Margin-Aware Recommendations · v2.1",
-    headSub: "Built from the approved margin re-rank — relevance from the agent, margin from Shopify, re-ranked within the relevant set.",
+    headSub: "Built from the approved margin re-rank — relevance from Manago, margin from Shopify, re-ranked within the relevant set.",
     builtFrom:
-      "Klints built this re-rank workflow from the margin fix you approved — relevance from the agent, margin from Shopify, re-ranked within the relevant set.",
+      "Klints built this re-rank workflow from the margin fix you approved — relevance from Manago, margin from Shopify, re-ranked within the relevant set.",
     touchpoints: ["Reco frame", "Re-rank policy", "Price + stock", "Email", "Coupon"],
-    connected: ["Manago.ai agent · A2A", "Shopify · cost / margin", "On-site reco frame"],
+    connected: ["Manago.ai agent · handoff target", "Shopify · cost / margin", "On-site reco frame"],
     identity: [
       { k: "Name", v: "Margin-Aware Recommendations" },
       { k: "Version", v: "v2.1.0" },
@@ -1461,8 +1461,8 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
     ],
     steps: [
       {
-        title: "1 · Pull agent relevance set",
-        desc: "Read the products the agent already judged relevant for the segment — never invent SKUs for margin alone.",
+        title: "1 · Pull Manago relevance set",
+        desc: "Read the products Manago already judged relevant for the segment — never invent SKUs for margin alone.",
         fields: ["source = manago.agent.relevance_set"],
       },
       {
@@ -1472,7 +1472,7 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
       },
       {
         title: "3 · Re-rank within relevance",
-        desc: "Favour profit inside the relevant set; deliver the re-rank spec to the agent over A2A.",
+        desc: "Favour profit inside the relevant set; stage the re-rank spec for Manago human activation.",
         fields: ["output = ranked_relevance_set"],
       },
       {
@@ -1491,9 +1491,9 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
     headTitle: "Second Purchase Accelerator · v1",
     headSub: "Opportunity identified by Klints — data ready, no fix required. Omnichannel brief for 1,247 repeat buyers.",
     builtFrom:
-      "Klints detected this segment gap during its lifecycle coverage scan — 1,247 repeat buyers with no active workflow. Data readiness confirmed. Klints assembled this workflow brief for the Manago.ai agent.",
+      "Klints detected this segment gap during its lifecycle coverage scan — 1,247 repeat buyers with no active workflow. Data readiness confirmed. Klints assembled this workflow brief for the Manago.ai agent (external · staged handoff).",
     touchpoints: ["Segment", "Email", "SMS", "Web Push", "Paid retargeting", "Reco frame"],
-    connected: ["Manago.ai agent · A2A", "Shopify · order history", "Meta / Google · paid retargeting"],
+    connected: ["Manago.ai agent · handoff target", "Shopify · order history", "Meta / Google · paid retargeting"],
     identity: [
       { k: "Name", v: "Second Purchase Accelerator" },
       { k: "Version", v: "v1.0.0" },
@@ -1520,7 +1520,7 @@ export const studioBlueprints: Record<string, StudioBlueprint> = {
       },
       {
         title: "4 · Email · D+3 · Second purchase offer",
-        desc: "Free EU shipping ≥ €55 — margin-safe. SKUs from agent relevance set.",
+        desc: "Free EU shipping ≥ €55 — margin-safe. SKUs from Manago relevance set.",
         fields: ["offer = free_shipping_eur55"],
       },
       {
@@ -1571,7 +1571,7 @@ export const qaRuns: QaRun[] = [
     workflowId: "wf-campaign-align",
     eyebrow: "Acquisition · €54K revenue · blocked",
     summary:
-      "Klints selected the gates that keep the entry chain consistent — offer, hold, consent and measurement. Klints supplies the cross-stack context; the agent builds the workflow.",
+      "Klints selected the gates that keep the entry chain consistent — offer, hold, consent and measurement. Klints supplies the cross-stack context; the Manago.ai agent builds the workflow.",
     touchpoints: ["Pop-up", "Landing", "Email", "Contact data", "Consent", "Funnel stage"],
     gates: [
       { name: "Offer consistency across ad → pop-up → landing", desc: "Campaign 30% vs pop-up 10% now aligned on the shared landing URL", status: "Passed" },
@@ -1622,7 +1622,7 @@ export const qaRuns: QaRun[] = [
     touchpoints: ["Reco frame", "Re-rank policy", "Price + stock", "Email", "Coupon"],
     gates: [
       { name: "Margin source connected", desc: "Per-SKU margin from Shopify cost fields connected", status: "Passed" },
-      { name: "Re-rank stays within the agent's relevant set", desc: "No product surfaced for margin alone", status: "Passed" },
+      { name: "Re-rank stays within Manago’s relevant set", desc: "No product surfaced for margin alone", status: "Passed" },
       { name: "Relevance signal intact post re-rank", desc: "Relevance ordering preserved; margin as tie-aware weighting", status: "Passed" },
       { name: "Margin floor respected", desc: "All re-ranked SKUs above the configured margin floor", status: "Passed" },
     ],
@@ -1645,7 +1645,7 @@ export const qaRuns: QaRun[] = [
     gates: [
       { name: "Logic graph closes · no infinite branches", desc: "Entry → exit paths verified", status: "Passed" },
       { name: "Data readiness · all required fields present", desc: "1,247 profiles · no missing fields", status: "Passed" },
-      { name: "Collision check via A2A", desc: "No active workflow targets this segment", status: "Passed" },
+      { name: "Collision check before handoff", desc: "No active workflow targets this segment", status: "Passed" },
       { name: "Consent gates · SMS", desc: "Gated on klints_consent_sms_safe · 96.2%", status: "Passed" },
       { name: "Consent gates · Web Push", desc: "Gated on klints_consent_webpush_safe", status: "Passed" },
       { name: "On-site reco scoped to segment", desc: "Tag-gated · 7-day window", status: "Passed" },
@@ -1678,7 +1678,7 @@ export type HandoffPackage = {
   machineSpec: Record<string, unknown>;
 };
 
-/** Phase 5 · agent-ready packages after QA */
+/** Phase 5 · staged packages after QA */
 export const handoffPackages: HandoffPackage[] = [
   {
     id: "ho-campaign",
@@ -1692,13 +1692,13 @@ export const handoffPackages: HandoffPackage[] = [
     qaRunId: "QA#40",
     ranAt: "Ready",
     workflowId: "wf-campaign-align",
-    summary: "QA cleared · offer chain consistent · ready for MCP/A2A delivery.",
-    delivery: "MCP / A2A → Manago.ai agent",
+    summary: "QA cleared · offer chain consistent · ready to stage for human activation.",
+    delivery: "Staged package · human activation in Manago.ai",
     changeSetId: "chg_lumera_campaign_017",
     impactBadge: "€54K revenue · blocked",
     targets: [
-      { name: "Manago.ai agent", desc: "Workflow brief + aligned offer rule", channel: "MCP/A2A" },
-      { name: "Manago.ai pop-up", desc: "UTM-scoped offer config", channel: "A2A" },
+      { name: "Manago.ai agent", desc: "Workflow brief + aligned offer rule", channel: "Staged handoff" },
+      { name: "Manago.ai pop-up", desc: "UTM-scoped offer config", channel: "External" },
       { name: "Shopify campaign", desc: "Hold / resume signal", channel: "API" },
     ],
     packageItems: [
@@ -1731,12 +1731,12 @@ export const handoffPackages: HandoffPackage[] = [
     qaRunId: "QA#39",
     ranAt: "Ready",
     workflowId: "wf-identity-unify",
-    summary: "QA cleared · clustering policy approved · ready for delivery.",
-    delivery: "MCP / A2A → Manago.ai agent",
+    summary: "QA cleared · clustering policy approved · ready to stage for handoff.",
+    delivery: "Staged package · human activation in Manago.ai",
     changeSetId: "chg_lumera_identity_033",
     impactBadge: "€38K revenue · blocked",
     targets: [
-      { name: "Manago.ai CDP", desc: "klints_identity_cluster + unified LTV on both contacts", channel: "A2A" },
+      { name: "Manago.ai CDP", desc: "klints_identity_cluster + unified LTV on both contacts", channel: "External" },
       { name: "Shopify", desc: "Match evidence · payment + address", channel: "API" },
     ],
     packageItems: [
@@ -1770,11 +1770,11 @@ export const handoffPackages: HandoffPackage[] = [
     ranAt: "Ready",
     workflowId: "wf-margin-rerank",
     summary: "QA cleared · margin floor + relevance guard passed.",
-    delivery: "MCP / A2A → Manago.ai agent",
+    delivery: "Staged package · human activation in Manago.ai",
     changeSetId: "chg_lumera_margin_051",
     impactBadge: "€12K margin · leaking",
     targets: [
-      { name: "Manago.ai agent", desc: "Re-rank spec within relevance set", channel: "MCP/A2A" },
+      { name: "Manago.ai agent", desc: "Re-rank spec within relevance set", channel: "Staged handoff" },
       { name: "Shopify", desc: "Cost / margin feed", channel: "API" },
     ],
     packageItems: [
@@ -1806,14 +1806,14 @@ export const handoffPackages: HandoffPackage[] = [
     qaRunId: "QA#38",
     ranAt: "5h ago",
     workflowId: "wf-second-purchase",
-    summary: "DCS 73 · above build threshold — no data fix; blueprint ready for the agent.",
-    delivery: "MCP / A2A → Manago.ai agent",
+    summary: "DCS 73 · above build threshold — no data fix; blueprint ready to stage for handoff.",
+    delivery: "Staged package · human activation in Manago.ai",
     changeSetId: "chg_lumera_untapped_062",
     impactBadge: "€46K revenue · opportunity",
     targets: [
-      { name: "Manago.ai agent", desc: "Omnichannel workflow brief", channel: "MCP/A2A" },
+      { name: "Manago.ai agent", desc: "Omnichannel workflow brief", channel: "Staged handoff" },
       { name: "Manago.ai CDP", desc: "Segment + retargeting writeback fields", channel: "API" },
-      { name: "Meta / Google", desc: "Paid retargeting audience (via agent)", channel: "A2A" },
+      { name: "Meta / Google", desc: "Paid retargeting audience (via Manago)", channel: "External" },
     ],
     packageItems: [
       "Segment definition · repeat_no_loyalty",

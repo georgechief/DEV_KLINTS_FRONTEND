@@ -3,7 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { AppShell, PageTitle } from "@/components/klints/AppShell";
 import { OverviewPanel } from "@/components/klints/OverviewPanel";
 import { KlintsLoader } from "@/components/klints/KlintsLoader";
-import { DCS_STATUS_QUERY_KEY, DCS_STATUS_STALE_MS } from "@/lib/app-access";
+import {
+  DCS_STATUS_QUERY_KEY,
+  DCS_STATUS_STALE_MS,
+  getDcsRunningRefetchInterval,
+  isDcsScoringStuck,
+} from "@/lib/app-access";
 import { getCurrentUser } from "@/lib/auth";
 import { getDcsStatus } from "@/lib/dcs";
 
@@ -60,10 +65,7 @@ function DashboardPage() {
     queryKey: DCS_STATUS_QUERY_KEY,
     queryFn: getDcsStatus,
     staleTime: DCS_STATUS_STALE_MS,
-    refetchInterval: (query) =>
-      query.state.data?.app_access === "soft_locked_running"
-        ? DCS_STATUS_STALE_MS
-        : false,
+    refetchInterval: (query) => getDcsRunningRefetchInterval(query.state.data),
   });
 
   const { data: currentUser } = useQuery({

@@ -8,7 +8,8 @@ export type OverviewSearchSection =
   | "stack"
   | "activity"
   | "value"
-  | "lifecycle";
+  | "lifecycle"
+  | "orch";
 
 export type OverviewSearchHit = {
   id: string;

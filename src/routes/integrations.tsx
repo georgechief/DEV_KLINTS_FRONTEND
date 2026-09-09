@@ -1,7 +1,10 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { formatDisplayWhen } from "@/lib/datetime";
+import {
+  formatDisplayIsoTitle,
+  formatDisplayWhen,
+} from "@/lib/datetime";
 import { ArrowRight, AlertTriangle, CheckCircle2, Loader2, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { formatDisplayCount } from "@/lib/presentation";
@@ -24,8 +27,12 @@ import {
   type Connector,
   type LatestBootstrap,
   connectManago,
+  connectorLastDataRefresh,
+  connectorLastSyncDisplayKind,
+  connectorSyncHealth,
   disconnectConnector,
   getApiErrorMessage,
+  isConnectorBootstrapInFlight,
   listConnectors,
   maskedConfigString,
   shopifyAuthFailureMessage,
@@ -33,7 +40,11 @@ import {
   startShopifyOAuth,
 } from "@/lib/connectors";
 import { getCurrentUser } from "@/lib/auth";
-import { DCS_STATUS_QUERY_KEY } from "@/lib/app-access";
+import {
+  DCS_STATUS_QUERY_KEY,
+  DCS_STATUS_STALE_MS,
+  refreshConnectorsThenDcsStatus,
+} from "@/lib/app-access";
 import { goToOnboardingManagoV3Step, traceManagoV3Onboarding } from "@/lib/manago-v3-onboarding";
 
 type IntegrationsSearch = {
@@ -112,7 +123,23 @@ function IntegrationsPage() {
     isError,
     error: loadError,
     refetch,
-  } = useQuery({ queryKey: ["connectors"], queryFn: listConnectors });
+  } = useQuery({
+    queryKey: ["connectors"],
+    queryFn: listConnectors,
+    staleTime: DCS_STATUS_STALE_MS,
+    refetchInterval: (query) =>
+      isConnectorBootstrapInFlight(query.state.data) ? DCS_STATUS_STALE_MS : false,
+  });
+
+  const bootstrapPending = isConnectorBootstrapInFlight(connectors);
+  const wasBootstrapPendingRef = useRef(false);
+  useEffect(() => {
+    // Bootstrap success enqueues DCS server-side — refresh status so Re-run enters loop.
+    if (wasBootstrapPendingRef.current && !bootstrapPending) {
+      void refreshConnectorsThenDcsStatus(queryClient);
+    }
+    wasBootstrapPendingRef.current = bootstrapPending;
+  }, [bootstrapPending, queryClient]);
 
   const { data: currentUser } = useQuery({
     queryKey: ["currentUser"],
@@ -135,8 +162,7 @@ function IntegrationsPage() {
           ? `${shopifyShop} is now connected to Klints.`
           : "Your store is now connected to Klints.",
       });
-      void queryClient.invalidateQueries({ queryKey: ["connectors"] });
-      void queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
+      void refreshConnectorsThenDcsStatus(queryClient);
     } else {
       toast.error("Shopify connection failed", {
         description: shopifyErrorReasonMessage(reason ?? ""),
@@ -234,8 +260,7 @@ function IntegrationsPage() {
       setManagoEndpoint("");
       setManagoClientId("");
       setManagoApiSecret("");
-      void queryClient.invalidateQueries({ queryKey: ["connectors"] });
-      void queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
+      await refreshConnectorsThenDcsStatus(queryClient);
     } catch (err) {
       setManagoError(getApiErrorMessage(err, "Could not connect Manago.ai."));
     } finally {
@@ -243,7 +268,13 @@ function IntegrationsPage() {
     }
   }
 
-  const connectedConnectors = (connectors ?? []).filter((c) => c.status === "connected");
+  // Linked connectors for sync-health (include error so auth failures appear in the table).
+  const connectedConnectors = (connectors ?? []).filter(
+    (c) =>
+      c.status === "connected" ||
+      c.status === "degraded" ||
+      c.status === "error",
+  );
 
   return (
     <AppShell title="Connected stack" subtitle="Phase 1 · Manago.ai + Shopify">
@@ -298,10 +329,20 @@ function IntegrationsPage() {
             const isLinked = isConnectorLinked(connector);
             const isError = isConnectorError(connector);
             const needsConnect = !isLinked || isError;
-            const bootstrap = connector?.latest_bootstrap;
+            const dataRefresh = connectorLastDataRefresh(connector);
+            const cardHealth = connector ? connectorSyncHealth(connector) : null;
             const shopifyFailureMessage =
               card.key === "shopify" && connector
                 ? shopifyAuthFailureMessage(connector.config)
+                : null;
+
+            const linkedSubtitle =
+              isLinked && connector && cardHealth
+                ? `${connectedLabel(connector)}${
+                    cardHealth.badge === "Healthy" || cardHealth.badge === "Connected"
+                      ? ""
+                      : ` · ${cardHealth.badge}`
+                  }`
                 : null;
 
             return (
@@ -315,8 +356,8 @@ function IntegrationsPage() {
                     <div>
                       <div className="text-base font-semibold">{card.title}</div>
                       <div className="text-xs text-muted-foreground">
-                        {isLinked && connector
-                          ? `${connectedLabel(connector)}${connector.status === "degraded" ? " · Degraded" : ""}`
+                        {linkedSubtitle
+                          ? linkedSubtitle
                           : isError
                             ? shopifyFailureMessage ?? "Error — reconnect required"
                             : "Not connected"}
@@ -356,35 +397,35 @@ function IntegrationsPage() {
 
                 {isLinked && (
                   <div className="mt-4 rounded-lg border border-border bg-sand px-3 py-2">
-                    {isBootstrapPending(bootstrap) ? (
-                      <p className="text-xs text-muted-foreground">Bootstrap pending…</p>
+                    {isBootstrapPending(dataRefresh) ? (
+                      <p className="text-xs text-muted-foreground">Data refresh pending…</p>
                     ) : (
                       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
                         <span className="text-muted-foreground">
                           Run ID{" "}
                           <span
                             className="font-mono text-foreground"
-                            title={bootstrap?.run_id ?? undefined}
+                            title={dataRefresh?.run_id ?? undefined}
                           >
-                            {shortRunId(bootstrap?.run_id)}
+                            {shortRunId(dataRefresh?.run_id)}
                           </span>
                         </span>
                         <span className="text-muted-foreground">
                           Contacts{" "}
                           <span className="tabular font-semibold text-foreground">
-                            {formatDisplayCount(bootstrap?.contacts ?? 0)}
+                            {formatDisplayCount(dataRefresh?.contacts ?? 0)}
                           </span>
                         </span>
                         <span className="text-muted-foreground">
                           Orders{" "}
                           <span className="tabular font-semibold text-foreground">
-                            {formatDisplayCount(bootstrap?.orders ?? 0)}
+                            {formatDisplayCount(dataRefresh?.orders ?? 0)}
                           </span>
                         </span>
                         <span className="text-muted-foreground">
                           Issues{" "}
                           <span className="tabular font-semibold text-foreground">
-                            {formatDisplayCount(bootstrap?.issue_count ?? 0)}
+                            {formatDisplayCount(dataRefresh?.issue_count ?? 0)}
                           </span>
                         </span>
                       </div>
@@ -543,13 +584,28 @@ function IntegrationsPage() {
 
                 <div className="mt-5 flex items-center justify-between border-t border-border pt-4">
                   <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                    {connector?.status === "connected" ? (
+                    {isLinked && connector && cardHealth ? (
                       <>
-                        <CheckCircle2 className="h-3.5 w-3.5 text-revenue" /> Healthy
-                      </>
-                    ) : connector?.status === "degraded" ? (
-                      <>
-                        <CheckCircle2 className="h-3.5 w-3.5 text-risk" /> Degraded
+                        {cardHealth.badge === "Error" ? (
+                          <span className="text-loss">Error — reconnect required</span>
+                        ) : (
+                          <>
+                            <CheckCircle2
+                              className={`h-3.5 w-3.5 ${
+                                cardHealth.badge === "Healthy"
+                                  ? "text-revenue"
+                                  : cardHealth.badge === "Degraded" ||
+                                      cardHealth.badge === "Demo"
+                                    ? "text-muted-foreground"
+                                    : "text-muted-foreground"
+                              }`}
+                            />
+                            {/* Footer badge from sync health — not status===connected → Healthy */}
+                            <span data-card-sync-badge={cardHealth.badge}>
+                              {cardHealth.badge}
+                            </span>
+                          </>
+                        )}
                       </>
                     ) : isError ? (
                       <span className="text-loss">Error — reconnect required</span>
@@ -609,22 +665,48 @@ function IntegrationsPage() {
       {connectedConnectors.length > 0 && (
         <Section
           title="Connector health"
-          description="Freshness and latency by source"
+          description="Last sync, lag, and import issues by source"
           className="mt-6"
         >
-          <div className="divide-y divide-border">
-            {connectedConnectors.map((c) => (
-              <div key={c.id} className="flex items-center gap-4 px-5 py-4 text-sm">
-                <div className="flex-1 font-medium">{c.display_name}</div>
-                <span className="text-xs text-muted-foreground">
-                  Latency <span className="tabular text-foreground">42s</span>
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  Errors <span className="tabular text-foreground">0</span>
-                </span>
-                <StatusBadge status="Running" />
-              </div>
-            ))}
+          <div
+            className="divide-y divide-border"
+            data-connector-sync-health="gap01e-w803"
+          >
+            {connectedConnectors.map((c) => {
+              const health = connectorSyncHealth(c);
+              const syncKind = connectorLastSyncDisplayKind(health);
+              const lastSyncLabel =
+                syncKind === "when" && health.finishedAt
+                  ? formatDisplayWhen(health.finishedAt)
+                  : syncKind === "syncing"
+                    ? "Syncing…"
+                    : "Never";
+              return (
+                <div key={c.id} className="flex flex-wrap items-center gap-4 px-5 py-4 text-sm">
+                  <div className="min-w-32 flex-1 font-medium">{c.display_name}</div>
+                  <span className="text-xs text-muted-foreground">
+                    Last sync{" "}
+                    <span
+                      className="tabular text-foreground"
+                      title={formatDisplayIsoTitle(health.finishedAt)}
+                    >
+                      {lastSyncLabel}
+                    </span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Lag{" "}
+                    <span className="tabular text-foreground">{health.lagLabel}</span>
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    Issues{" "}
+                    <span className="tabular text-foreground">
+                      {formatDisplayCount(health.issueCount)}
+                    </span>
+                  </span>
+                  <StatusBadge status={health.badge} />
+                </div>
+              );
+            })}
           </div>
         </Section>
       )}

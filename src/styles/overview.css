@@ -977,6 +977,7 @@
 .overview-panel .ov-nba-title,
 .overview-panel .ov-nba-revenue--metric,
 .overview-panel .ov-nba-action .why,
+.overview-panel .ov-nba-blurb,
 .overview-panel .ov-nba-impact-text {
   min-width: 0;
   max-width: 100%;
@@ -1140,6 +1141,12 @@
   font-size: 12px;
   color: rgb(22 22 26 / 0.6);
   line-height: 1.45;
+}
+.overview-panel .ov-nba-blurb {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgb(22 22 26 / 0.72);
 }
 .overview-panel .ov-nba-action .ov-btn {
   grid-area: action;

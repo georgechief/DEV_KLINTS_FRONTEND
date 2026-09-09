@@ -4,11 +4,16 @@ import {
   formatExecutiveIssueCard,
   formatFriendlyEvidenceRows,
   friendlyEvidenceSystem,
-  type DcsEvidenceItem,
   type DcsIssue,
   type DcsWorklistIssueDetail,
 } from "@/lib/dcs";
+import { collectFixEvidenceItems } from "@/lib/fix-evidence-source";
 import type { FixPlan } from "@/lib/klints-data";
+import {
+  writebackMappingTargets,
+  writebackStaleReclaimPolicyLabel,
+  type WritebackMappingEntry,
+} from "@/lib/writebacks";
 
 const FRIENDLY_PREVIEW_COLUMNS = [
   "Where it came from",
@@ -28,21 +33,11 @@ function touchpointsForIssue(issue: DcsIssue): string[] {
   return ["Manago.ai", "Shopify"];
 }
 
-function previewItems(
-  issue: DcsIssue,
-  detail?: DcsWorklistIssueDetail | null,
-): DcsEvidenceItem[] {
-  if (detail?.mismatches?.length) return detail.mismatches;
-  if (detail?.evidence?.length) return detail.evidence;
-  if (issue.evidence_preview?.length) return issue.evidence_preview;
-  return [];
-}
-
 function buildFriendlyPreview(
   issue: DcsIssue,
   detail?: DcsWorklistIssueDetail | null,
 ): { previewColumns: string[]; previewRows: string[][] } {
-  const items = previewItems(issue, detail);
+  const items = collectFixEvidenceItems(issue, detail)?.items ?? [];
   if (!items.length) {
     return {
       previewColumns: [...FRIENDLY_PREVIEW_COLUMNS],
@@ -70,7 +65,7 @@ function buildFriendlyPreview(
 }
 
 function connectorsLabel(issue: DcsIssue, detail?: DcsWorklistIssueDetail | null): string {
-  const items = previewItems(issue, detail);
+  const items = collectFixEvidenceItems(issue, detail)?.items ?? [];
   const labels = new Set<string>();
 
   for (const item of items) {
@@ -90,7 +85,7 @@ function evidenceSummary(
   issue: DcsIssue,
   detail?: DcsWorklistIssueDetail | null,
 ): string {
-  const items = previewItems(issue, detail);
+  const items = collectFixEvidenceItems(issue, detail)?.items ?? [];
   if (!items.length) return "No samples on latest score";
   const mismatchCount = detail?.mismatches?.length ?? 0;
   if (mismatchCount > 0) {
@@ -148,22 +143,95 @@ export function buildLiveFixPlan(
       { label: "Approved", status: "pending" },
       { label: "Applied", status: "pending" },
     ],
-    previewTitle: `Evidence · ${checkId}`,
+    previewTitle: `Consistency check · ${preview.previewRows.length} element${
+      preview.previewRows.length === 1 ? "" : "s"
+    }`,
     previewHelper:
-      "Evidence from the latest score. Use Writeback preview when a mapping exists to see before/after changes (dry-run only).",
+      "dry-run only — every evidenced row is checked before approval is requested.",
     previewColumns: preview.previewColumns,
     previewRows: preview.previewRows,
     govHead:
-      "Klints does not write to Manago until human approval is granted and execute is enabled.",
+      "Writebacks require preview, approval request, then admin Approve & write when Allow writebacks is on in Settings → Workspace.",
     gov: [
-      { k: "Approval owner", v: "Workspace admin (pending)" },
-      { k: "Production target", v: "Not enabled" },
-      { k: "Audit mode", v: "Will attach on approval" },
+      { k: "Approval owner", v: "Workspace admin" },
+      { k: "Write target", v: "Connected Manago / Shopify when writebacks on" },
+      { k: "Audit mode", v: "Will attach on approve / execute" },
       { k: "Source evidence", v: checkId },
-      { k: "Current state", v: "Plan ready · preview available · execute not enabled" },
-      { k: "Rollback", v: "Available when writebacks ship" },
+      { k: "Current state", v: "Plan ready · run writeback preview first" },
+      {
+        k: "Rollback",
+        v: writebackStaleReclaimPolicyLabel(),
+      },
     ],
-    testBadge: "Sandbox writeback · Coming soon",
-    ctaLabel: "Build · Coming soon",
+    testBadge: "Run writeback preview before requesting approval",
+    ctaLabel: "Proceed to Workflow Studio",
+  };
+}
+
+/** Minimal Fix plan for writeback mappings (e.g. WB-SHOP-01). */
+export function buildSandboxWritebackFixPlan(
+  mapping: WritebackMappingEntry,
+): FixPlan {
+  const checkId = mapping.check_id.trim();
+  const title = mapping.title?.trim() || `${checkId} writeback`;
+  const targets = writebackMappingTargets(mapping);
+  const isShopify = targets.includes("Shopify") && !targets.includes("Manago.ai");
+  const scopeNote = isShopify
+    ? "Shopify customer field only · order/transaction writes not supported"
+    : "Manago contact/details/tags · event ingest is separate from Shopify orders";
+
+  return {
+    eyebrow: `Writeback · ${checkId}`,
+    title,
+    summary:
+      mapping.title?.trim() ||
+      "Automated writeback mapping. Run Writeback preview, request approval, then admin Approve & write to your connected accounts.",
+    changeSetId: `chg_pending_${checkId}`,
+    mode: "approve",
+    kv: [
+      {
+        k: "What changes",
+        v: title,
+      },
+      { k: "Where it changes", v: targets.join(" · ") },
+      { k: "Scope", v: `${checkId} · writeback mapping` },
+      {
+        k: "Evidence",
+        v: isShopify
+          ? "Shopify customer from connected store"
+          : "Manago contact from connected stack",
+      },
+      { k: "Status", v: "Preview then approve" },
+      { k: "Check ID", v: checkId },
+      { k: "Write surface", v: scopeNote },
+    ],
+    touchpoints: targets,
+    states: [
+      { label: "Diagnosed", status: "done" },
+      { label: "Evidenced", status: "done" },
+      { label: "Plan ready", status: "current" },
+      { label: "Approved", status: "pending" },
+      { label: "Applied", status: "pending" },
+    ],
+    previewTitle: `Consistency check · ${checkId}`,
+    previewHelper:
+      "Every step is checked for consistency before the change is approved.",
+    previewColumns: [...FRIENDLY_PREVIEW_COLUMNS],
+    previewRows: [["—", "—", "—", "—", "Use Writeback preview for row-level before/after"]],
+    govHead:
+      "Request approval after preview; admin Approve & write runs execute when writebacks are enabled in Settings.",
+    gov: [
+      { k: "Approval owner", v: "Workspace admin" },
+      { k: "Write target", v: targets.join(" · ") },
+      { k: "Audit mode", v: "Will attach on approve / execute" },
+      { k: "Source mapping", v: checkId },
+      { k: "Current state", v: "Run writeback preview first" },
+      {
+        k: "Rollback",
+        v: writebackStaleReclaimPolicyLabel(),
+      },
+    ],
+    testBadge: "Run writeback preview before requesting approval",
+    ctaLabel: "Proceed to Workflow Studio",
   };
 }

@@ -496,3 +496,54 @@
   background: var(--dcc-good);
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 0 0 1px rgb(46 136 87 / 0.2);
 }
+
+.dcc-page .dcc-ai-explain {
+  margin-top: 12px;
+  border: var(--dcc-hair);
+  border-radius: 10px;
+  background: var(--dcc-sand);
+  padding: 10px 12px;
+}
+.dcc-page .dcc-ai-explain-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dcc-fog);
+}
+.dcc-page .dcc-ai-explain-headline {
+  margin-top: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-foreground, #16161a);
+}
+.dcc-page .dcc-ai-explain-body {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgb(22 22 26 / 0.72);
+}
+.dcc-page .dcc-ai-explain-skeleton {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+.dcc-page .dcc-ai-explain-skel-line {
+  height: 8px;
+  border-radius: 999px;
+  background: rgb(22 22 26 / 0.08);
+  animation: dcc-ai-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes dcc-ai-shimmer {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}

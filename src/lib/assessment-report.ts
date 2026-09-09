@@ -3,6 +3,8 @@ import { apiRequest, apiRequestBlob } from "@/lib/api";
 export type AssessmentReportComposeBody = {
   since: string;
   until: string;
+  /** Polished overview brief profile — use via downloadOverviewBrief on Export surfaces. */
+  report_profile?: "overview_brief";
 };
 
 export type AssessmentReportMetadata = {
@@ -11,6 +13,7 @@ export type AssessmentReportMetadata = {
   variant: string;
   payload_hash: string;
   template_version: string;
+  report_profile?: string | null;
   created_at?: string;
 };
 
@@ -114,9 +117,15 @@ export function triggerBrowserDownload(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-/** Compose for the Overview period, stream PDF, trigger a browser download. */
-export async function downloadAssessmentBrief(body: AssessmentReportComposeBody): Promise<void> {
-  const report = await composeAssessmentReport(body);
+/** Compose + PDF for Overview Export brief (polished overview_brief profile). */
+export async function downloadOverviewBrief(body: {
+  since: string;
+  until: string;
+}): Promise<void> {
+  const report = await composeAssessmentReport({
+    ...body,
+    report_profile: "overview_brief",
+  });
   if (!report.report_id) {
     throw { detail: "Compose did not return a report id.", status: 500 };
   }

@@ -3,16 +3,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Download, Loader2, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { DcsDimensionChart, DcsTrendChart, OverviewValueSpark } from "@/components/klints/DcsCharts";
+import { NbaBlurbBox } from "@/components/klints/NbaBlurbBox";
 import {
   AUDIT_EVENTS_QUERY_KEY,
   AUDIT_NOTIFICATIONS_QUERY_KEY,
   listAuditEvents,
+  resolveAuditDeepLink,
   resolveAuditEventMeta,
   formatAuditEventSummary,
   type AuditEvent,
   type AuditTone,
 } from "@/lib/audit";
-import { listConnectors } from "@/lib/connectors";
+import { connectorLastDataRefresh, listConnectors } from "@/lib/connectors";
 import {
   DCS_BUILD_READY_THRESHOLD,
   DCS_PERIOD_CAPTURED_EYEBROW,
@@ -53,6 +55,15 @@ import {
   ORCH_STALE_MS,
 } from "@/lib/orchestration";
 import {
+  listOrchestrationTasks,
+  ORCH_TASKS_QUERY_KEY,
+  ORCH_TASKS_STALE_MS,
+  orchTaskDisplayTitle,
+  orchTaskStatusChipClass,
+  orchTaskStatusLabel,
+  type OrchestrationTaskRecord,
+} from "@/lib/orchestration-tasks";
+import {
   AF_COVERAGE_QUERY_KEY,
   AF_LATEST_QUERY_KEY,
   AF_LATEST_STALE_MS,
@@ -66,9 +77,13 @@ import {
 } from "@/lib/architecture";
 import {
   getUseCaseRecommendations,
+  routeIssueTarget,
   UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
+  type RouteIssueTarget,
+  type UseCasePilotRecommendation,
 } from "@/lib/use-cases";
+import { issueRouteSignalsFromDcs } from "@/lib/issue-routing";
 import {
   filterOverviewHits,
   getOverviewSearchSnapshot,
@@ -81,7 +96,12 @@ import {
   textMatchesQuery,
   type OverviewSearchHit,
 } from "@/lib/overview-search";
-import { getIssueById } from "@/lib/fix-flow";
+import { cn } from "@/lib/utils";
+import {
+  assessmentReportErrorMessage,
+  downloadOverviewBrief,
+} from "@/lib/assessment-report";
+import { toast } from "sonner";
 import {
   aggregateDcsTrendPoints,
   aggregateValueCapturePoints,
@@ -100,12 +120,6 @@ import {
   formatDisplayIsoTitle,
   formatDisplayWhen,
 } from "@/lib/datetime";
-import { cn } from "@/lib/utils";
-import {
-  assessmentReportErrorMessage,
-  downloadAssessmentBrief,
-} from "@/lib/assessment-report";
-import { toast } from "sonner";
 
 const periods = overviewPeriods;
 const statusFilters = ["All", "Blocked", "Leaking", "Opportunity", "Tracked"] as const;
@@ -120,17 +134,42 @@ function nbaFilterBucket(issue: DcsIssue): (typeof statusFilters)[number] {
 }
 
 /**
- * PRD prefers /fix?issue=; Fix page is still fixture-keyed today.
- * Live DCS check_ids (LE-05, …) open Data Center until Fix binds live worklist.
+ * PRD-FE-13 + GAP-01E W8-02 — taxonomy routing (Data/Workflow/Security) with unlock fallback.
+ * Name retained for verify:fe13.
  */
-function nbaOpenTarget(checkId: string): {
-  to: "/fix" | "/data-consistency";
-  search: { issue: string } | { check: string };
-} {
-  if (getIssueById(checkId)) {
-    return { to: "/fix", search: { issue: checkId } };
-  }
-  return { to: "/data-consistency", search: { check: checkId } };
+function nbaOpenTarget(
+  checkId: string,
+  options?: {
+    issue?: DcsIssue | null;
+    pilots?: UseCasePilotRecommendation[] | null;
+  },
+): RouteIssueTarget | null {
+  return routeIssueTarget({
+    checkId,
+    issue: options?.issue ? issueRouteSignalsFromDcs(options.issue) : { checkId },
+    pilots: options?.pilots,
+  });
+}
+
+/** FE-13 — taxonomy first; then Fix when unlocked; else DCS; else Integrations. */
+function issueOpenTarget(
+  checkId: string,
+  options: {
+    fixAllowed: boolean;
+    dataCenterAllowed: boolean;
+    issue?: DcsIssue | null;
+    pilots?: UseCasePilotRecommendation[] | null;
+  },
+): RouteIssueTarget | null {
+  return routeIssueTarget({
+    checkId,
+    issue: options.issue ? issueRouteSignalsFromDcs(options.issue) : { checkId },
+    pilots: options.pilots,
+    access: {
+      fixAllowed: options.fixAllowed,
+      dataCenterAllowed: options.dataCenterAllowed,
+    },
+  });
 }
 
 function nbaCardVariant(issue: DcsIssue): string {
@@ -181,10 +220,16 @@ function buildLiveStakeRows(
 
 function LiveRevenueStakeBreakdown({
   rows,
+  fixAllowed,
   dataCenterAllowed,
+  issues,
+  pilots,
 }: {
   rows: LiveStakeRow[];
+  fixAllowed: boolean;
   dataCenterAllowed: boolean;
+  issues: DcsIssue[];
+  pilots?: UseCasePilotRecommendation[] | null;
 }) {
   if (rows.length === 0) return null;
 
@@ -217,12 +262,20 @@ function LiveRevenueStakeBreakdown({
           </>
         );
 
-        if (dataCenterAllowed) {
+        const issue = issues.find((item) => item.check_id === row.checkId) ?? null;
+        const target = issueOpenTarget(row.checkId, {
+          fixAllowed,
+          dataCenterAllowed,
+          issue,
+          pilots,
+        });
+        if (target) {
           return (
             <Link
               key={row.checkId}
-              to="/data-consistency"
-              search={{ check: row.checkId }}
+              to={target.to}
+              search={"search" in target ? target.search : undefined}
+              data-issue-route={target.taxonomy}
               {...common}
             >
               {body}
@@ -231,7 +284,7 @@ function LiveRevenueStakeBreakdown({
         }
 
         return (
-          <Link key={row.checkId} to="/integrations" {...common}>
+          <Link key={row.checkId} to="/integrations" data-issue-route="fallback" {...common}>
             {body}
           </Link>
         );
@@ -293,6 +346,7 @@ function RecentActivityCard({
   onRetry,
   searchQuery,
   activeId,
+  fixAllowed,
 }: {
   events: AuditEvent[];
   isPending: boolean;
@@ -301,6 +355,7 @@ function RecentActivityCard({
   onRetry: () => void;
   searchQuery: string;
   activeId: string | null;
+  fixAllowed: boolean;
 }) {
   const heading = recentActivityHeading(events);
   const sectionMatches =
@@ -394,10 +449,14 @@ function RecentActivityCard({
               Boolean(normalizeSearchQuery(searchQuery)) &&
               textMatchesQuery(rowText, searchQuery);
 
+            const deepLink = resolveAuditDeepLink(event, { fixAllowed });
+
             return (
               <Link
                 key={event.id}
-                to="/activity"
+                to={deepLink.to}
+                search={deepLink.search}
+                hash={deepLink.hash}
                 data-ov-search-id={searchId}
                 className={cn(
                   "ov-feed-row",
@@ -443,6 +502,129 @@ function RecentActivityCard({
                   <span className="meta" aria-hidden />
                 )}
               </Link>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PersistedOrchTasksCard({
+  tasks,
+  isPending,
+  isError,
+  isFetching,
+  onRetry,
+  searchQuery,
+  activeId,
+}: {
+  tasks: OrchestrationTaskRecord[];
+  isPending: boolean;
+  isError: boolean;
+  isFetching: boolean;
+  onRetry: () => void;
+  searchQuery: string;
+  activeId: string | null;
+}) {
+  const sectionMatches =
+    Boolean(normalizeSearchQuery(searchQuery)) &&
+    textMatchesQuery(
+      joinSearchText("Persisted orchestration tasks", "Workflow state"),
+      searchQuery,
+    );
+
+  return (
+    <div
+      data-ov-search-id="orch-tasks-section"
+      className={cn(
+        "ov-card",
+        sectionMatches && "ov-search-hit",
+        activeId === "orch-tasks-section" && "ov-search-hit--active",
+      )}
+    >
+      <div className="ov-card-head">
+        <div>
+          <div className="ov-eyebrow" style={{ marginBottom: 4 }}>
+            {highlightSearchText("Workflow state", searchQuery)}
+          </div>
+          <h2 className="ov-h2">
+            {highlightSearchText("Persisted orchestration tasks", searchQuery)}
+          </h2>
+        </div>
+      </div>
+
+      <div className="ov-card-body" style={{ padding: "6px 20px" }}>
+        {isPending ? (
+          <div className="ov-activity-state">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading orchestration tasks…
+          </div>
+        ) : isError ? (
+          <div className="ov-activity-state ov-activity-state--error">
+            <span>Could not load orchestration tasks.</span>
+            <button
+              type="button"
+              className="ov-btn ov-btn-sm"
+              onClick={onRetry}
+              disabled={isFetching}
+            >
+              {isFetching ? "Retrying…" : "Try again"}
+            </button>
+          </div>
+        ) : tasks.length === 0 ? (
+          <div className="ov-activity-state">No persisted orchestration tasks yet.</div>
+        ) : (
+          tasks.map((task) => {
+            const title = orchTaskDisplayTitle(task);
+            const statusLabel = orchTaskStatusLabel(task.status);
+            const chipClass = orchTaskStatusChipClass(task.status);
+            const searchId = `orch-task-${task.id}`;
+            const rowText = joinSearchText(
+              task.task_id,
+              task.task_type,
+              title,
+              task.check_id,
+              statusLabel,
+              task.status,
+              "Persisted orchestration tasks",
+            );
+            const rowMatches =
+              Boolean(normalizeSearchQuery(searchQuery)) &&
+              textMatchesQuery(rowText, searchQuery);
+
+            return (
+              <div
+                key={task.id}
+                data-ov-search-id={searchId}
+                className={cn(
+                  "ov-feed-row",
+                  rowMatches && "ov-search-hit",
+                  activeId === searchId && "ov-search-hit--active",
+                )}
+              >
+                <span className="when ov-badge mono" title={task.task_id}>
+                  {highlightSearchText(task.task_type, searchQuery)}
+                </span>
+                <span className="actor ov-badge mono" title={task.task_id}>
+                  {highlightSearchText(task.task_id, searchQuery)}
+                </span>
+                <span className="what">
+                  <span className="verb">{highlightSearchText(title, searchQuery)}</span>
+                  {task.check_id ? (
+                    <span className="secondary">
+                      {" · "}
+                      {highlightSearchText(task.check_id, searchQuery)}
+                    </span>
+                  ) : null}
+                </span>
+                <span
+                  className={cn("ov-chip-readiness", chipClass)}
+                  data-orch-task-status={String(task.status).trim().toUpperCase()}
+                >
+                  {highlightSearchText(statusLabel, searchQuery)}
+                </span>
+              </div>
             );
           })
         )}
@@ -507,6 +689,21 @@ export function OverviewPanel({
     queryFn: getOrchestrationPlan,
     staleTime: ORCH_STALE_MS,
   });
+  const {
+    data: orchTasksData,
+    isPending: orchTasksPending,
+    isError: orchTasksError,
+    refetch: refetchOrchTasks,
+    isFetching: orchTasksFetching,
+  } = useQuery({
+    queryKey: ORCH_TASKS_QUERY_KEY,
+    queryFn: () => listOrchestrationTasks(),
+    staleTime: ORCH_TASKS_STALE_MS,
+  });
+  const persistedOrchTasks = useMemo(
+    () => orchTasksData?.results?.slice(0, 12) ?? [],
+    [orchTasksData?.results],
+  );
   const { data: dcsWorklist } = useQuery({
     queryKey: DCS_WORKLIST_QUERY_KEY,
     queryFn: getDcsWorklist,
@@ -538,7 +735,7 @@ export function OverviewPanel({
   const queryClient = useQueryClient();
   const exportBriefMutation = useMutation({
     mutationFn: () =>
-      downloadAssessmentBrief({
+      downloadOverviewBrief({
         since: periodWindow.since.toISOString(),
         until: periodWindow.until.toISOString(),
       }),
@@ -634,6 +831,7 @@ export function OverviewPanel({
       : "Not calculated");
   const isCalculating = dcsStatus.score_display.state === "calculating";
   const dataCenterAllowed = isNavRouteAllowed(dcsStatus, "/data-consistency");
+  const fixAllowed = isNavRouteAllowed(dcsStatus, "/fix");
   const businessImpact = dcsStatus.business_impact;
   const atStakeAmount = businessImpact?.estimate;
   const atStakeCurrency = businessImpact?.currency;
@@ -977,6 +1175,46 @@ export function OverviewPanel({
       ),
     });
 
+    hits.push({
+      id: "orch-tasks-section",
+      section: "orch",
+      title: "Persisted orchestration tasks",
+      subtitle: `${persistedOrchTasks.length} task${persistedOrchTasks.length === 1 ? "" : "s"}`,
+      haystack: normalizeSearchQuery(
+        joinSearchText(
+          "Persisted orchestration tasks",
+          "Workflow state",
+          ...persistedOrchTasks.flatMap((task) => [
+            task.task_id,
+            task.task_type,
+            orchTaskDisplayTitle(task),
+            task.check_id,
+            orchTaskStatusLabel(task.status),
+            task.status,
+          ]),
+        ),
+      ),
+    });
+
+    for (const task of persistedOrchTasks) {
+      hits.push({
+        id: `orch-task-${task.id}`,
+        section: "orch",
+        title: orchTaskDisplayTitle(task),
+        subtitle: orchTaskStatusLabel(task.status),
+        haystack: normalizeSearchQuery(
+          joinSearchText(
+            task.task_id,
+            task.task_type,
+            task.check_id,
+            orchTaskStatusLabel(task.status),
+            task.status,
+            "Persisted orchestration tasks",
+          ),
+        ),
+      });
+    }
+
     for (const event of activityEvents) {
       const actor = (event.actor || event.performed_by || "").trim();
       const actionLabel = formatAuditActionLabel(event.action);
@@ -1043,6 +1281,7 @@ export function OverviewPanel({
     openCheckCount,
     opportunityCount,
     passCount,
+    persistedOrchTasks,
     pilotsReadyCount,
     primaryBlocker,
     revenueMixedCurrency,
@@ -1102,9 +1341,10 @@ export function OverviewPanel({
             <span className="ov-strip-label">Connected</span>
             {(connectors ?? []).map((c) => {
               const degraded = c.status === "degraded" || c.status === "error";
+              const refresh = connectorLastDataRefresh(c);
               const syncing =
-                c.latest_bootstrap?.data_run_status === "pending" ||
-                c.latest_bootstrap?.data_run_status === "running";
+                refresh?.data_run_status === "pending" ||
+                refresh?.data_run_status === "running";
               const searchId = `connector-${c.id}`;
               const pillText = joinSearchText(
                 "Connected",
@@ -1129,11 +1369,11 @@ export function OverviewPanel({
                   title={
                     [
                       c.status,
-                      c.latest_bootstrap?.summary_status
-                        ? `bootstrap: ${c.latest_bootstrap.summary_status}`
+                      refresh?.summary_status
+                        ? `refresh: ${refresh.summary_status}`
                         : null,
-                      c.latest_bootstrap
-                        ? `${formatDisplayCount(c.latest_bootstrap.contacts)} contacts · ${formatDisplayCount(c.latest_bootstrap.orders)} orders`
+                      refresh
+                        ? `${formatDisplayCount(refresh.contacts)} contacts · ${formatDisplayCount(refresh.orders)} orders`
                         : null,
                     ]
                       .filter(Boolean)
@@ -1370,7 +1610,10 @@ export function OverviewPanel({
               </div>
               <LiveRevenueStakeBreakdown
                 rows={revenueStakeRows}
+                fixAllowed={fixAllowed}
                 dataCenterAllowed={dataCenterAllowed}
+                issues={rankedIssues}
+                pilots={ucRecommendations?.pilots}
               />
             </div>
             <div>
@@ -1462,26 +1705,35 @@ export function OverviewPanel({
                 impact !== "—"
                   ? `${topIssueExec.title} · ${impact}`
                   : topIssueExec.title;
-              if (dataCenterAllowed && topIssue.check_id) {
-                return (
-                  <>
-                    <Link
-                      to="/data-consistency"
-                      search={{ check: topIssue.check_id }}
-                      className="mono"
-                    >
-                      {label}
-                    </Link>
-                    {" → Open"}
-                  </>
-                );
+              if (topIssue.check_id) {
+                const target = issueOpenTarget(topIssue.check_id, {
+                  fixAllowed,
+                  dataCenterAllowed,
+                  issue: topIssue,
+                  pilots: ucRecommendations?.pilots,
+                });
+                if (target) {
+                  return (
+                    <>
+                      <Link
+                        to={target.to}
+                        search={"search" in target ? target.search : undefined}
+                        className="mono"
+                        data-issue-route={target.taxonomy}
+                      >
+                        {label}
+                      </Link>
+                      {" → Open"}
+                    </>
+                  );
+                }
               }
-              if (!dataCenterAllowed) {
+              if (!dataCenterAllowed && !fixAllowed) {
                 return (
                   <>
                     <span className="mono">{label}</span>
                     {" → "}
-                    <Link to="/integrations" className="mono">
+                    <Link to="/integrations" className="mono" data-issue-route="fallback">
                       Open
                     </Link>
                   </>
@@ -1575,7 +1827,12 @@ export function OverviewPanel({
             {nbaIssues.map((issue, index) => {
               const exec = formatExecutiveIssueCard(issue, index, businessImpact);
               const checkId = issue.check_id?.trim() || null;
-              const openTarget = checkId ? nbaOpenTarget(checkId) : null;
+              const openTarget = checkId
+                ? nbaOpenTarget(checkId, {
+                    issue,
+                    pilots: ucRecommendations?.pilots,
+                  })
+                : null;
               const searchId = `nba-${issue.check_id ?? index}`;
               const isOpp = issue.is_optional;
               const cardMatches =
@@ -1597,7 +1854,7 @@ export function OverviewPanel({
                 if (openTarget) {
                   void navigate({
                     to: openTarget.to,
-                    search: openTarget.search,
+                    search: "search" in openTarget ? openTarget.search : undefined,
                   });
                   return;
                 }
@@ -1671,6 +1928,14 @@ export function OverviewPanel({
                       </span>
                     </div>
                   </div>
+                  <NbaBlurbBox
+                    checkId={checkId ?? ""}
+                    dcsRunId={
+                      dcsWorklist?.data_run_id ?? dcsStatus.latest_run?.data_run_id
+                    }
+                    planRank={index + 1}
+                    enabled={Boolean(checkId)}
+                  />
                   <div className="ov-nba-action">
                     <div className="why">
                       {highlightSearchText(exec.whyMatters, searchQuery)}
@@ -1678,8 +1943,11 @@ export function OverviewPanel({
                     {openTarget ? (
                       <Link
                         to={openTarget.to}
-                        search={openTarget.search}
+                        search={
+                          "search" in openTarget ? openTarget.search : undefined
+                        }
                         className="ov-btn ov-btn-sm"
+                        data-issue-route={openTarget.taxonomy}
                         onClick={(event) => event.stopPropagation()}
                       >
                         Open →
@@ -1688,6 +1956,7 @@ export function OverviewPanel({
                       <Link
                         to="/integrations"
                         className="ov-btn ov-btn-sm"
+                        data-issue-route="fallback"
                         onClick={(event) => event.stopPropagation()}
                       >
                         Open →
@@ -2056,6 +2325,18 @@ export function OverviewPanel({
 
       <div className="ov-spacer" />
 
+      <PersistedOrchTasksCard
+        tasks={persistedOrchTasks}
+        isPending={orchTasksPending}
+        isError={orchTasksError}
+        isFetching={orchTasksFetching}
+        onRetry={() => void refetchOrchTasks()}
+        searchQuery={searchQuery}
+        activeId={activeId}
+      />
+
+      <div className="ov-spacer" />
+
       <RecentActivityCard
         events={activityEvents}
         isPending={activityPending}
@@ -2064,6 +2345,7 @@ export function OverviewPanel({
         onRetry={() => void refetchActivity()}
         searchQuery={searchQuery}
         activeId={activeId}
+        fixAllowed={fixAllowed}
       />
     </div>
   );

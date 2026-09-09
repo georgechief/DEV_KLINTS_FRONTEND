@@ -1,5 +1,7 @@
+import type { QueryClient } from "@tanstack/react-query";
 import { isRedirect, redirect } from "@tanstack/react-router";
 import { apiRequest } from "@/lib/api";
+import { listConnectors } from "@/lib/connectors";
 import {
   isOnboardingManagoV3Step,
   isManagoV3OnboardingPending,
@@ -21,7 +23,7 @@ const PUBLIC_ROUTES = new Set([
   "/reset-password",
 ]);
 
-export type AppHomePath = "/onboarding" | "/dashboard";
+export type AppHomePath = "/onboarding" | "/dashboard" | "/integrations";
 
 /** URL search value for the optional post-Manago API v3 onboarding step (PRD-FE-07). */
 export const ONBOARDING_MANAGO_V3_STEP = "manago-api-v3" as const;
@@ -42,8 +44,40 @@ export type CurrentUser = {
     id: string;
     name: string;
     domain: string;
+    writeback_execute_enabled?: boolean;
   } | null;
 };
+
+/** Fail closed when the API omits the flag (PRD-WB-03). */
+export function companyWritebackExecuteEnabled(
+  company: CurrentUser["company"],
+): boolean {
+  return company?.writeback_execute_enabled === true;
+}
+
+export function applyWritebackExecuteToCurrentUser(
+  user: CurrentUser | undefined,
+  enabled: boolean,
+): CurrentUser | undefined {
+  if (!user?.company) return user;
+  return {
+    ...user,
+    company: {
+      ...user.company,
+      writeback_execute_enabled: enabled,
+    },
+  };
+}
+
+/** Keep /auth/me cache in sync immediately after workspace PATCH (avoids stale Fix gate). */
+export function syncCurrentUserWritebackFlag(
+  queryClient: QueryClient,
+  enabled: boolean,
+): void {
+  queryClient.setQueryData<CurrentUser>(["auth", "me"], (previous) =>
+    applyWritebackExecuteToCurrentUser(previous, enabled),
+  );
+}
 
 export async function getCurrentUser(): Promise<CurrentUser> {
   return apiRequest("/api/v1/auth/me/") as Promise<CurrentUser>;
@@ -63,6 +97,7 @@ export type WorkspaceSummary = {
     id: string;
     name: string;
     domain: string;
+    writeback_execute_enabled?: boolean;
   };
 };
 
@@ -70,6 +105,7 @@ export type UpdateWorkspacePayload = {
   tenant_name?: string;
   company_name?: string;
   company_domain?: string;
+  writeback_execute_enabled?: boolean;
 };
 
 export async function forgotPassword(email: string): Promise<DetailResponse> {
@@ -101,6 +137,13 @@ export async function changePassword(
   return apiRequest("/api/v1/auth/change-password/", {
     method: "POST",
     body: JSON.stringify({ current_password, new_password }),
+  }) as Promise<DetailResponse>;
+}
+
+export async function resendVerificationEmail(email: string): Promise<DetailResponse> {
+  return apiRequest("/api/v1/auth/resend-verification/", {
+    method: "POST",
+    body: JSON.stringify({ email: email.trim().toLowerCase() }),
   }) as Promise<DetailResponse>;
 }
 
@@ -172,20 +215,37 @@ export function isForbiddenError(err: unknown): boolean {
   );
 }
 
-export function appHomePathForNeedsConnector(needsConnector: boolean): AppHomePath {
-  return needsConnector ? "/onboarding" : "/dashboard";
+/**
+ * First-time connect vs reconnect after auth failure (CONN-05 / DCS-10 fresh import).
+ * Only send users to Connected stack when a connector is in terminal `error` —
+ * not during first-time onboarding (connector row may exist while bootstrap runs).
+ */
+export async function resolveConnectorSetupPath(): Promise<
+  "/onboarding" | "/integrations"
+> {
+  try {
+    const connectors = await listConnectors();
+    if (!connectors.length) return "/onboarding";
+    const hasTerminalError = connectors.some(
+      (connector) => connector.status === "error",
+    );
+    return hasTerminalError ? "/integrations" : "/onboarding";
+  } catch {
+    return "/onboarding";
+  }
 }
 
 /** Resolve post-auth landing from /me or a known login `needs_connector` value. */
 export async function resolveAppHomePath(
   knownNeedsConnector?: boolean,
 ): Promise<AppHomePath> {
-  if (typeof knownNeedsConnector === "boolean") {
-    return appHomePathForNeedsConnector(knownNeedsConnector);
-  }
+  const needsConnector =
+    typeof knownNeedsConnector === "boolean"
+      ? knownNeedsConnector
+      : (await getCurrentUser()).needs_connector === true;
 
-  const user = await getCurrentUser();
-  return appHomePathForNeedsConnector(user.needs_connector === true);
+  if (!needsConnector) return "/dashboard";
+  return resolveConnectorSetupPath();
 }
 
 export function setAuthTokens(data: Record<string, unknown>): void {
@@ -260,9 +320,9 @@ export async function requireOnboarding(
   try {
     const home = await resolveAppHomePath();
     traceManagoV3Onboarding("requireOnboarding: resolved home", { home });
-    if (home === "/dashboard") {
-      traceManagoV3Onboarding("requireOnboarding → /dashboard");
-      throw redirect({ to: "/dashboard" });
+    if (home !== "/onboarding") {
+      traceManagoV3Onboarding(`requireOnboarding → ${home}`);
+      throw redirect({ to: home });
     }
   } catch (err) {
     if (isRedirect(err)) throw err;

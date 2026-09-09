@@ -1,7 +1,12 @@
 import { fixPlans, issues, type FixPlan, type GovernanceIssue } from "@/lib/klints-data";
 import { formatCustomerIssueTitle, type DcsIssue } from "@/lib/dcs";
-import { buildLiveFixPlan } from "@/lib/fix-live-plan";
+import { buildLiveFixPlan, buildSandboxWritebackFixPlan } from "@/lib/fix-live-plan";
 import { resolveCheckIdFromSearch } from "@/lib/dcs";
+import {
+  isWritebackMappingEnabled,
+  findWritebackMapping,
+  type WritebackMappingEntry,
+} from "@/lib/writebacks";
 
 /** Shared search shape for fix-flow pages — all keys optional */
 export type FixFlowSearch = {
@@ -34,6 +39,11 @@ export function getCheckIdFromSearch(search: FixFlowSearch): string | undefined 
 export function isFixtureIssueId(id: string | undefined | null): boolean {
   if (!id) return false;
   return /^iss-/i.test(id.trim());
+}
+
+/** Demo fixtures (iss-*) are blocked in production builds (PRD-FE-13 §8.2). */
+export function fixturesAllowedInBuild(): boolean {
+  return !import.meta.env.PROD;
 }
 
 export function findWorklistIssueByCheckId(
@@ -83,9 +93,29 @@ export function resolveFixFlowIssueTitle(
 export type FixTarget =
   | { kind: "fixture"; issueId: string; issue: GovernanceIssue; plan: FixPlan }
   | { kind: "live"; checkId: string; issue: DcsIssue; plan: FixPlan }
+  | {
+      kind: "sandbox-mapping";
+      checkId: string;
+      mapping: WritebackMappingEntry;
+      plan: FixPlan;
+    }
   | { kind: "loading"; checkId: string }
   | { kind: "missing"; checkId?: string }
   | { kind: "empty" };
+
+export function fixTargetCheckId(target: FixTarget): string | undefined {
+  if (target.kind === "fixture") return undefined;
+  if (target.kind === "empty") return undefined;
+  if (target.kind === "missing") return target.checkId;
+  if (target.kind === "loading") return target.checkId;
+  if (target.kind === "live") return target.checkId;
+  if (target.kind === "sandbox-mapping") return target.checkId;
+  return undefined;
+}
+
+export function isFixTargetWritebackCapable(target: FixTarget): boolean {
+  return target.kind === "live" || target.kind === "sandbox-mapping";
+}
 
 /**
  * Resolve Fix page target from URL search + optional worklist payload.
@@ -94,11 +124,12 @@ export type FixTarget =
 export function resolveFixTarget(
   search: FixFlowSearch,
   worklistIssues: DcsIssue[] | undefined,
+  writebackMappings?: WritebackMappingEntry[],
 ): FixTarget {
   const fixtureId =
     search.issue && isFixtureIssueId(search.issue) ? search.issue.trim() : undefined;
 
-  if (fixtureId) {
+  if (fixtureId && fixturesAllowedInBuild()) {
     const issue = getIssueById(fixtureId);
     const plan = fixPlans[fixtureId];
     if (issue && plan) {
@@ -117,14 +148,28 @@ export function resolveFixTarget(
   }
 
   const liveIssue = findWorklistIssueByCheckId(worklistIssues, checkId);
-  if (!liveIssue) {
-    return { kind: "missing", checkId };
+  if (liveIssue) {
+    return {
+      kind: "live",
+      checkId,
+      issue: liveIssue,
+      plan: buildLiveFixPlan(liveIssue),
+    };
   }
 
-  return {
-    kind: "live",
-    checkId,
-    issue: liveIssue,
-    plan: buildLiveFixPlan(liveIssue),
-  };
+  const mapping = findWritebackMapping(writebackMappings, checkId);
+  if (mapping && isWritebackMappingEnabled(writebackMappings, checkId)) {
+    return {
+      kind: "sandbox-mapping",
+      checkId,
+      mapping,
+      plan: buildSandboxWritebackFixPlan(mapping),
+    };
+  }
+
+  if (writebackMappings === undefined) {
+    return { kind: "loading", checkId };
+  }
+
+  return { kind: "missing", checkId };
 }

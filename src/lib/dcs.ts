@@ -126,6 +126,18 @@ export type DcsScoreDisplay = {
   label: string | null;
 };
 
+export type DcsFreshImportPlatform = "shopify" | "manago_ai";
+
+export type DcsFreshImportPlatformSummary = {
+  data_run_id?: number;
+  window_end?: string;
+};
+
+/** PRD-DCS-10 Slice B — per-platform fresh import summary on run payloads. */
+export type DcsFreshImportsSummary = Partial<
+  Record<DcsFreshImportPlatform, DcsFreshImportPlatformSummary>
+>;
+
 export type DcsRunSummary = {
   data_run_id: number;
   domain_run_id: string | null;
@@ -136,8 +148,11 @@ export type DcsRunSummary = {
   error: string | null;
   triggered_by: string | null;
   started_at: string | null;
+  created_at?: string | null;
   finished_at: string | null;
   run_diff?: DcsRunDiff | null;
+  fresh_imports?: DcsFreshImportsSummary | null;
+  fresh_import_failed_platform?: DcsFreshImportPlatform | null;
 };
 
 export type DcsRunDiffHeadline = {
@@ -158,6 +173,12 @@ export type DcsEvidenceItem = {
   locator: string;
   value: unknown;
   observed_at: string;
+  /** PRD-FE-11 — enriched by worklist normalize when available. */
+  entity?: string;
+  db_key?: string;
+  api_key?: string;
+  element?: string;
+  element_label?: string;
 };
 
 export type DcsDimensionCheck = {
@@ -278,6 +299,9 @@ export type DcsWorklistIssueDetail = {
   revenue_impact: number;
   currency: string | null;
   revenue_formula_id: string | null;
+  fix_owner?: string | null;
+  fix_type?: string | null;
+  systems_compared?: string | null;
   evidence: DcsEvidenceItem[];
   matches: DcsEvidenceItem[];
   mismatches: DcsEvidenceItem[];
@@ -346,6 +370,15 @@ export function isAppLocked(status: DcsAppStatus): boolean {
   return status.app_access !== "unlocked";
 }
 
+/** Unlocked after a prior score, but latest terminal run failed — hide ready score. */
+export function isDcsScoreHiddenAfterFailure(status: DcsAppStatus): boolean {
+  return (
+    status.app_access === "unlocked" &&
+    status.score_display.state === "not_calculated" &&
+    status.latest_run?.status === "failed"
+  );
+}
+
 export function isDcsScoreReady(status: DcsAppStatus): boolean {
   return (
     status.score_display.state === "ready" &&
@@ -354,11 +387,14 @@ export function isDcsScoreReady(status: DcsAppStatus): boolean {
 }
 
 export function displayHeadlineScore(status: DcsAppStatus): number | null {
-  if (status.score_display.headline_score != null) {
+  // Only surface the score the API marked ready — never invent from best_headline.
+  if (
+    status.score_display.state === "ready" &&
+    status.score_display.headline_score != null
+  ) {
     return status.score_display.headline_score;
   }
-  if (isDcsScoreReady(status)) return status.best_headline_score;
-  return status.best_headline_score;
+  return null;
 }
 
 function normalizeIsoCurrency(currency: string | null | undefined): string | null {
@@ -626,14 +662,25 @@ export function formatConsecutiveRunDiffLabel(
     : `${displayDelta} vs prior run`;
 }
 
-const CHECK_ID_PATTERN = /^[A-Z]{2}-\d{2}$/;
+const DCS_CHECK_ID_PATTERN = /^[A-Z]{2}-\d{2}$/i;
+/** Sandbox writeback registry ids (PRD-WB-01B e.g. WB-SHOP-01). */
+const WRITEBACK_SANDBOX_CHECK_ID_PATTERN = /^WB-[A-Z]+-\d{2}$/i;
+
+export function isFixFlowCheckOrMappingId(value: string | undefined | null): boolean {
+  if (!value?.trim()) return false;
+  const id = value.trim();
+  if (/^iss-/i.test(id)) return false;
+  return (
+    DCS_CHECK_ID_PATTERN.test(id) || WRITEBACK_SANDBOX_CHECK_ID_PATTERN.test(id)
+  );
+}
 
 export function resolveCheckIdFromSearch(
   check?: string | null,
   issue?: string | null,
 ): string | undefined {
   if (typeof check === "string" && check.trim()) return check.trim();
-  if (typeof issue === "string" && CHECK_ID_PATTERN.test(issue.trim())) {
+  if (typeof issue === "string" && isFixFlowCheckOrMappingId(issue)) {
     return issue.trim();
   }
   return undefined;
@@ -1777,12 +1824,143 @@ export function primaryBlockingDimensionLabel(status: DcsAppStatus): string | nu
   return resolvePrimaryBlocker(status.run_progress?.stages, status.issues)?.label ?? null;
 }
 
+const FRESH_IMPORT_PLATFORMS: readonly DcsFreshImportPlatform[] = [
+  "shopify",
+  "manago_ai",
+];
+
+export function formatFreshImportPlatformLabel(
+  platform: DcsFreshImportPlatform,
+): string {
+  switch (platform) {
+    case "shopify":
+      return "Shopify";
+    case "manago_ai":
+      return "Manago";
+  }
+}
+
+export function getRunFreshImports(
+  run: DcsRunSummary | null | undefined,
+): DcsFreshImportsSummary | null {
+  const raw = run?.fresh_imports;
+  if (!raw || typeof raw !== "object") return null;
+  return raw;
+}
+
+function coerceFreshImportDataRunId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && !Number.isNaN(Number(value))) {
+    return Number(value);
+  }
+  return null;
+}
+
+/** True when the run payload includes at least one fresh-import data_run_id. */
+export function hasFreshImportsOnRun(
+  run: DcsRunSummary | null | undefined,
+): boolean {
+  const fresh = getRunFreshImports(run);
+  if (!fresh) return false;
+  return FRESH_IMPORT_PLATFORMS.some((platform) => {
+    const block = fresh[platform];
+    return coerceFreshImportDataRunId(block?.data_run_id) != null;
+  });
+}
+
+export type DcsImportConnectorRef = {
+  name: string;
+  status: string;
+};
+
+/** True when at least one Shopify/Manago connector expects a DCS fresh import. */
+export function hasEligibleConnectedDcsConnectors(
+  connectors: DcsImportConnectorRef[] | null | undefined,
+): boolean {
+  if (!connectors?.length) return false;
+  return connectors.some(
+    (connector) =>
+      (connector.name === "shopify" || connector.name === "manago_ai") &&
+      (connector.status === "connected" || connector.status === "degraded"),
+  );
+}
+
+export function getFoundationRunStage(
+  stages: DcsRunStage[] | null | undefined,
+): DcsRunStage | null {
+  return stages?.find((stage) => stage.dimension_id === "00") ?? null;
+}
+
+/**
+ * PRD-DCS-10 Slice D — connector import phase before scoring.
+ * Foundation (`00`) is running, no checks evaluated yet, and this run has not
+ * recorded fresh_imports (import still in flight).
+ */
+export function isDcsFreshImportPhaseRunning(
+  status: DcsAppStatus,
+  options?: { expectFreshImport?: boolean },
+): boolean {
+  if (options?.expectFreshImport === false) return false;
+
+  const run = status.active_run;
+  const runActive =
+    Boolean(status.scheduled) ||
+    status.app_access === "soft_locked_running" ||
+    run?.status === "pending" ||
+    run?.status === "running";
+  if (!runActive) return false;
+
+  const foundation = getFoundationRunStage(status.run_progress?.stages);
+  if (foundation?.state !== "running") return false;
+  if ((foundation.evaluated_count ?? 0) > 0) return false;
+
+  return !hasFreshImportsOnRun(run);
+}
+
+export function formatFreshImportPhaseCopy(): string {
+  return "Fetching latest Shopify + Manago data…";
+}
+
+export function resolveFreshImportFailedPlatform(
+  status: DcsAppStatus,
+): DcsFreshImportPlatform | null {
+  for (const run of [status.active_run, status.latest_run]) {
+    if (!run || run.status !== "failed") continue;
+    const platform = run.fresh_import_failed_platform;
+    if (platform === "shopify" || platform === "manago_ai") return platform;
+  }
+  return null;
+}
+
+export function formatFreshImportFailedCopy(
+  platform: DcsFreshImportPlatform | null | undefined,
+): string | null {
+  if (platform == null) return null;
+  return `Could not fetch latest ${formatFreshImportPlatformLabel(platform)} data for this run. Check Connected stack, fix the connection if needed, then re-run checks.`;
+}
+
 /** Customer-facing score card copy when the headline score is not ready. */
 export function formatScoreBlockedCopy(status: DcsAppStatus): {
   lead: string;
   primaryBlocker: string | null;
 } {
   const primaryBlocker = primaryBlockingDimensionLabel(status);
+  const freshImportFailed = resolveFreshImportFailedPlatform(status);
+  const freshImportFailedCopy = formatFreshImportFailedCopy(freshImportFailed);
+
+  if (freshImportFailedCopy) {
+    return {
+      lead: freshImportFailedCopy,
+      primaryBlocker,
+    };
+  }
+
+  if (isDcsFreshImportPhaseRunning(status)) {
+    return {
+      lead: formatFreshImportPhaseCopy(),
+      primaryBlocker: null,
+    };
+  }
 
   if (status.lock_reason === "running_no_score" || status.app_access === "soft_locked_running") {
     return {
@@ -1792,6 +1970,13 @@ export function formatScoreBlockedCopy(status: DcsAppStatus): {
   }
 
   if (status.lock_reason === "failed") {
+    return {
+      lead: "The DCS score is not available because the latest scoring run did not finish.",
+      primaryBlocker,
+    };
+  }
+
+  if (status.latest_run?.status === "failed") {
     return {
       lead: "The DCS score is not available because the latest scoring run did not finish.",
       primaryBlocker,
@@ -1884,6 +2069,14 @@ export function friendlyEvidenceSystem(
   const rec = asPlainRecord(value);
   const side = asPlainString(rec?.side)?.toLowerCase() ?? "";
 
+  if (
+    side === "dead_state" ||
+    side === "dead_date_cluster" ||
+    /drift\.contact_state|contact_state_distribution/.test(blob)
+  ) {
+    return "Manago.ai";
+  }
+
   if (side === "shopify_only" || /shopify/.test(blob)) return "Shopify";
   if (side === "manago_only" || /manago/.test(blob)) return "Manago.ai";
   if (side === "duplicate_purchase" || side.includes("duplicate")) {
@@ -1965,6 +2158,24 @@ function describeGenericRecord(
   if (side === "duplicate_purchase" || side?.includes("duplicate")) {
     return describeDuplicateCluster(rec, currency);
   }
+  if (side === "dead_state") {
+    const bucket = asPlainString(rec.bucket);
+    const count = asPlainNumber(rec.count);
+    return {
+      what: bucket ? `${humanizeSnakeLabel(bucket)} state cluster` : "Dead-state cluster",
+      detail: count != null ? `Count: ${formatDisplayCount(count)}` : "Blocked or resigned contacts",
+    };
+  }
+  if (side === "dead_date_cluster") {
+    const day = asPlainString(rec.day);
+    const count = asPlainNumber(rec.count);
+    const parts = [day ? `Spike day ${day}` : "State spike day"];
+    if (count != null) parts.push(`Count: ${formatDisplayCount(count)}`);
+    return {
+      what: "Contact state spike",
+      detail: parts.join(" · "),
+    };
+  }
 
   const rate = asPlainNumber(rec.duplicate_rate);
   if (rate != null) {
@@ -2009,33 +2220,86 @@ function describeGenericRecord(
     }
   }
 
-  const what = locator
+  const what = locator && !isPlaceholderEvidenceLocator(locator)
     ? humanizeSnakeLabel(locator.split(".").pop() || locator)
-    : "Data difference";
+    : side
+      ? humanizeSnakeLabel(side)
+      : "Data difference";
   return {
     what,
     detail: parts.join(" · ") || "See connected systems for this check",
   };
 }
 
+function isPlaceholderEvidenceLocator(locator: string | undefined): boolean {
+  const trimmed = (locator ?? "").trim().toLowerCase();
+  return !trimmed || trimmed === "—" || trimmed === "-" || trimmed === "n/a" || trimmed === "na";
+}
+
+type FriendlyEvidenceElementFields = Pick<
+  DcsEvidenceItem,
+  "element" | "element_label" | "api_key" | "db_key" | "entity"
+>;
+
+function looksLikeFieldPath(value: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(value);
+}
+
+function formatEntityField(
+  entity: string | null | undefined,
+  field: string | null | undefined,
+): string | null {
+  const e = entity?.trim();
+  const f = field?.trim();
+  if (e && f) return `${e}.${f}`;
+  if (f) return f;
+  return null;
+}
+
+function evidenceElementLabel(
+  item?: FriendlyEvidenceElementFields,
+  value?: unknown,
+): string | null {
+  const rec = asPlainRecord(value);
+  return asPlainString(item?.element_label) || asPlainString(rec?.element_label);
+}
+
+/** PRD-FE-11B — Elements = {entity}.{api_key}; never prefer element_label. */
 function friendlyEvidenceElement(
   locator: string | undefined,
   value: unknown,
+  item?: FriendlyEvidenceElementFields,
 ): string {
   const rec = asPlainRecord(value);
+  const entity = asPlainString(item?.entity) || asPlainString(rec?.entity);
+  const apiKey = asPlainString(item?.api_key) || asPlainString(rec?.api_key);
+  const fromApi = formatEntityField(entity, apiKey);
+  if (fromApi) return fromApi;
 
-  const explicit =
+  const dbKey =
+    asPlainString(item?.db_key) ||
+    asPlainString(rec?.db_key) ||
+    asPlainString(rec?.field);
+  const fromDb = formatEntityField(entity, dbKey);
+  if (fromDb) return fromDb;
+
+  const element =
+    asPlainString(item?.element) ||
     asPlainString(rec?.element) ||
     asPlainString(rec?.element_name) ||
-    asPlainString(rec?.fix_target) ||
-    asPlainString(rec?.field) ||
-    asPlainString(rec?.fix_type);
-  if (explicit) return humanizeSnakeLabel(explicit);
+    asPlainString(rec?.fix_target);
+  if (element) {
+    if (looksLikeFieldPath(element) || element.includes(".")) return element;
+    const withEntity = formatEntityField(entity, element);
+    if (withEntity) return withEntity;
+    return element;
+  }
 
   const loc = (locator ?? "").trim();
-  if (loc) {
+  if (loc && !isPlaceholderEvidenceLocator(loc)) {
+    if (looksLikeFieldPath(loc)) return loc;
     const leaf = loc.split(/[./]+/).filter(Boolean).pop();
-    if (leaf) return humanizeSnakeLabel(leaf);
+    if (leaf) return leaf;
   }
 
   const side = asPlainString(rec?.side);
@@ -2070,12 +2334,13 @@ function pushFriendlyRow(
   detail: string,
   currency?: string | null,
 ): void {
+  const whatLabel = evidenceElementLabel(item, item.value) || what;
   rows.push({
-    id: `${item.source}-${item.locator}-${index}-${what}`,
+    id: `${item.source}-${item.locator}-${index}-${whatLabel}`,
     system: friendlyEvidenceSystem(item.source, item.value, item.locator),
-    what,
+    what: whatLabel,
     detail,
-    element: friendlyEvidenceElement(item.locator, item.value),
+    element: friendlyEvidenceElement(item.locator, item.value, item),
     when: formatWhenLabel(item.observed_at),
   });
   void currency;
@@ -2113,12 +2378,14 @@ export function formatFriendlyEvidenceRows(
         const clusterRec = asPlainRecord(cluster);
         if (!clusterRec) return;
         const described = describeDuplicateCluster(clusterRec, currency);
+        const whatLabel =
+          evidenceElementLabel(item, clusterRec) || described.what;
         rows.push({
           id: `${item.source}-${index}-cluster-${clusterIndex}`,
           system: friendlyEvidenceSystem(item.source, clusterRec, item.locator),
-          what: described.what,
+          what: whatLabel,
           detail: described.detail,
-          element: friendlyEvidenceElement(item.locator, clusterRec),
+          element: friendlyEvidenceElement(item.locator, clusterRec, item),
           when: formatWhenLabel(item.observed_at),
         });
       });

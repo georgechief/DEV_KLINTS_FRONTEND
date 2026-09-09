@@ -8,7 +8,19 @@ import { formatDisplayWhen } from "@/lib/datetime";
 import {
   DCS_STATUS_QUERY_KEY,
   DCS_STATUS_STALE_MS,
+  DCS_STALE_POLL_MS,
+  getDcsRunningRefetchInterval,
+  invalidateAfterDcsRunComplete,
+  isDcsScoringStuck,
 } from "@/lib/app-access";
+import {
+  AUDIT_EVENTS_QUERY_KEY,
+  AUDIT_NOTIFICATIONS_QUERY_KEY,
+} from "@/lib/audit";
+import {
+  assessmentReportErrorMessage,
+  downloadOverviewBrief,
+} from "@/lib/assessment-report";
 import { ORCH_PLAN_QUERY_KEY, ORCH_STALE_MS, fixTasksFromPlan, getOrchestrationPlan, sortIssuesByPlanOrder } from "@/lib/orchestration";
 import {
   DCS_BUILD_READY_THRESHOLD,
@@ -31,11 +43,29 @@ import {
   resolvePeriodHeadlineDelta,
   severityLabel,
   sortDcsWorklistIssues,
+  formatFreshImportFailedCopy,
+  formatFreshImportPhaseCopy,
+  formatFreshImportPlatformLabel,
+  hasEligibleConnectedDcsConnectors,
+  hasFreshImportsOnRun,
+  isDcsFreshImportPhaseRunning,
+  resolveFreshImportFailedPlatform,
   startDcsRun,
   type DcsIssue,
   type DcsIssueStatus,
 } from "@/lib/dcs";
-import { getApiErrorMessage, listConnectors } from "@/lib/connectors";
+import {
+  getUseCaseRecommendations,
+  resolveDcsRowCtas,
+  UC_RECOMMENDATIONS_QUERY_KEY,
+  UC_STALE_MS,
+  type UseCasePilotRecommendation,
+} from "@/lib/use-cases";
+import {
+  classifyIssueRouteKind,
+  issueRouteSignalsFromDcs,
+} from "@/lib/issue-routing";
+import { getApiErrorMessage, isConnectorBootstrapInFlight, listConnectors } from "@/lib/connectors";
 import {
   aggregateDcsTrendPoints,
   computeTrendDelta,
@@ -137,12 +167,122 @@ function countIssuesByDisplayStatus(issues: DcsIssue[]) {
   return { blocked, leaking, opportunity, tracked };
 }
 
+function DcsIssueRowActions({
+  issue,
+  pilots,
+  recommendationsPending,
+  recommendationsSuccess,
+  size = "sm",
+}: {
+  issue: DcsIssue;
+  pilots: UseCasePilotRecommendation[] | undefined;
+  recommendationsPending: boolean;
+  recommendationsSuccess: boolean;
+  size?: "sm" | "default";
+}) {
+  const checkId = issue.check_id;
+  if (!checkId) return null;
+
+  const rowStatus: "FAIL" | "WARN" | "PASS" =
+    issue.status === "FAIL" || issue.status === "WARN" ? issue.status : "PASS";
+
+  const ctas = resolveDcsRowCtas({
+    checkId,
+    status: rowStatus,
+    isOptional: issue.is_optional,
+    pilots,
+    recommendationsPending,
+    recommendationsSuccess,
+    issue: {
+      checkId,
+      dimension: issue.dimension,
+      fixOwner: issue.fix_owner,
+      title: issue.title,
+      detail: issue.detail,
+      suggestedFix: issue.suggested_fix,
+      systemsCompared: issue.systems_compared,
+      isOptional: issue.is_optional,
+      status: issue.status,
+    },
+  });
+
+  const ctaClass =
+    size === "sm" ? "dcc-fix-cta dcc-fix-cta-sm" : "dcc-fix-cta";
+  const arrowClass = size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4";
+
+  if (ctas.pending && !ctas.primary) {
+    return (
+      <span className="text-[11px] text-muted-foreground">Loading gates…</span>
+    );
+  }
+
+  if (!ctas.primary) return null;
+
+  const failWarn =
+    issue.status === "FAIL" || issue.status === "WARN";
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      {ctas.primary.kind === "fix" ? (
+        <Link
+          to="/fix"
+          search={{ issue: ctas.primary.checkId }}
+          className={ctaClass}
+          data-issue-route="data"
+        >
+          Fix this issue <ArrowRight className={arrowClass} />
+        </Link>
+      ) : null}
+      {ctas.primary.kind === "build" ? (
+        <Link
+          to={ctas.primary.link.to}
+          search={ctas.primary.link.search}
+          className={`${ctaClass} build`}
+          data-issue-route="workflow"
+        >
+          {ctas.primary.label} <ArrowRight className={arrowClass} />
+        </Link>
+      ) : null}
+      {ctas.primary.kind === "integrations" ? (
+        <Link
+          to="/integrations"
+          className={ctaClass}
+          data-issue-route="security"
+        >
+          {ctas.primary.label} <ArrowRight className={arrowClass} />
+        </Link>
+      ) : null}
+      {ctas.primary.kind === "passed" ? (
+        <span className="text-[11px] font-medium text-muted-foreground">Passed</span>
+      ) : null}
+      {ctas.pending && failWarn ? (
+        <span className="text-[10px] text-muted-foreground">Loading gates…</span>
+      ) : null}
+      {!ctas.pending && ctas.secondary ? (
+        <Link
+          to={ctas.secondary.link.to}
+          search={ctas.secondary.link.search}
+          className="text-[11px] font-medium text-anchor hover:underline"
+        >
+          Blocks {ctas.secondary.uc}
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
 function WorklistIssueDetail({
   checkId,
   listIssue,
+  pilots,
+  recommendationsPending,
+  recommendationsSuccess,
 }: {
   checkId: string;
   listIssue: DcsIssue;
+  pilots: UseCasePilotRecommendation[] | undefined;
+  recommendationsPending: boolean;
+  recommendationsSuccess: boolean;
 }) {
   const {
     data: detail,
@@ -201,13 +341,13 @@ function WorklistIssueDetail({
             revenue_impact: detail.revenue_impact ?? listIssue.revenue_impact,
           })}
         </p>
-        <Link
-          to="/fix"
-          search={{ issue: checkId }}
-          className="dcc-fix-cta"
-        >
-          Fix this issue <ArrowRight className="h-4 w-4" />
-        </Link>
+        <DcsIssueRowActions
+          issue={listIssue}
+          pilots={pilots}
+          recommendationsPending={recommendationsPending}
+          recommendationsSuccess={recommendationsSuccess}
+          size="default"
+        />
       </div>
     </div>
   );
@@ -248,6 +388,22 @@ function FailedRunWorklistRow({
   issue: DcsIssue;
   rank: number;
 }) {
+  // No check_id — do not send users to bare /fix. Security copy → Integrations;
+  // otherwise Data Center to re-score / re-import.
+  const taxonomy = classifyIssueRouteKind(issueRouteSignalsFromDcs(issue));
+  const cta =
+    taxonomy === "security"
+      ? {
+          to: "/integrations" as const,
+          label: "Open Integrations · reconnect",
+          route: "security" as const,
+        }
+      : {
+          to: "/data-consistency" as const,
+          label: "Open Data Center · re-score",
+          route: "data" as const,
+        };
+
   return (
     <div className="border-l-[3px] border-l-loss bg-[#FDFCF8]">
       <div className="flex gap-3 px-4 py-4">
@@ -275,8 +431,13 @@ function FailedRunWorklistRow({
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Projected impact
             </div>
-            <Link to="/integrations" className="dcc-fix-cta dcc-fix-cta-sm mt-2">
-              Fix this issue <ArrowRight className="h-3.5 w-3.5" />
+            <Link
+              to={cta.to}
+              className="dcc-fix-cta dcc-fix-cta-sm mt-2"
+              data-issue-route={cta.route}
+              data-failed-run-cta="gap01e-w802"
+            >
+              {cta.label} <ArrowRight className="h-3.5 w-3.5" />
             </Link>
           </div>
         </div>
@@ -291,6 +452,15 @@ function DataConsistencyPage() {
   const queryClient = useQueryClient();
   const checkFromUrl = getCheckIdFromSearch(search);
 
+  const { data: connectors } = useQuery({
+    queryKey: ["connectors"],
+    queryFn: listConnectors,
+    staleTime: DCS_STATUS_STALE_MS,
+    refetchInterval: (query) =>
+      isConnectorBootstrapInFlight(query.state.data) ? DCS_STATUS_STALE_MS : false,
+  });
+  const bootstrapPending = isConnectorBootstrapInFlight(connectors);
+
   const {
     data: dcsStatus,
     isPending: statusPending,
@@ -302,15 +472,17 @@ function DataConsistencyPage() {
     queryFn: getDcsStatus,
     staleTime: DCS_STATUS_STALE_MS,
     refetchInterval: (query) =>
-      query.state.data?.app_access === "soft_locked_running"
-        ? DCS_STATUS_STALE_MS
-        : false,
+      getDcsRunningRefetchInterval(query.state.data, Date.now(), {
+        expectDcsSoon: bootstrapPending,
+      }),
   });
 
   const isScoreRunning =
+    Boolean(dcsStatus?.scheduled) ||
     dcsStatus?.app_access === "soft_locked_running" ||
     dcsStatus?.active_run?.status === "pending" ||
     dcsStatus?.active_run?.status === "running";
+  const scoringStuck = isDcsScoringStuck(dcsStatus);
 
   const {
     data: worklist,
@@ -322,7 +494,22 @@ function DataConsistencyPage() {
     queryKey: DCS_WORKLIST_QUERY_KEY,
     queryFn: getDcsWorklist,
     staleTime: DCS_STATUS_STALE_MS,
-    refetchInterval: isScoreRunning ? DCS_STATUS_STALE_MS : false,
+    refetchInterval:
+      bootstrapPending || isScoreRunning
+        ? scoringStuck
+          ? DCS_STALE_POLL_MS
+          : DCS_STATUS_STALE_MS
+        : false,
+  });
+
+  const {
+    data: recommendations,
+    isPending: recommendationsPending,
+    isSuccess: recommendationsSuccess,
+  } = useQuery({
+    queryKey: UC_RECOMMENDATIONS_QUERY_KEY,
+    queryFn: getUseCaseRecommendations,
+    staleTime: UC_STALE_MS,
   });
 
   const {
@@ -336,18 +523,17 @@ function DataConsistencyPage() {
     staleTime: ORCH_STALE_MS,
   });
 
-  const { data: connectors } = useQuery({
-    queryKey: ["connectors"],
-    queryFn: listConnectors,
-  });
-
   const rerunMutation = useMutation({
     mutationFn: () => startDcsRun(),
     onSuccess: (data) => {
-      toast.success("Verification started", {
-        description: data.dcs_run_id
-          ? `Run ${data.dcs_run_id.slice(0, 8)} queued · Manago.ai + Shopify checks.`
-          : `Run #${data.data_run_id} queued · Manago.ai + Shopify checks.`,
+      pendingFreshImportAckRef.current = true;
+      pendingFreshImportRunIdRef.current = data.data_run_id;
+      const runLabel = data.dcs_run_id
+        ? `Run ${data.dcs_run_id.slice(0, 8)} queued`
+        : `Run #${data.data_run_id} queued`;
+      rerunToastIdRef.current = toast.success("Verification started", {
+        id: "dcs-rerun-started",
+        description: `${runLabel} · Manago.ai + Shopify checks.`,
       });
       void queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
       void queryClient.invalidateQueries({ queryKey: DCS_WORKLIST_QUERY_KEY });
@@ -355,10 +541,11 @@ function DataConsistencyPage() {
       void queryClient.invalidateQueries({ queryKey: ORCH_PLAN_QUERY_KEY });
     },
     onError: (err) => {
+      void queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
       toast.error("Could not start checks", {
         description: getApiErrorMessage(
           err,
-          "Please try again in a moment.",
+          "Start Redis and Celery, then try again.",
         ),
       });
     },
@@ -382,19 +569,92 @@ function DataConsistencyPage() {
   }, [checkFromUrl]);
 
   const wasScoreRunningRef = useRef(false);
+  const pendingFreshImportAckRef = useRef(false);
+  const pendingFreshImportRunIdRef = useRef<number | null>(null);
+  const rerunToastIdRef = useRef<string | number | null>(null);
   useEffect(() => {
     if (wasScoreRunningRef.current && !isScoreRunning) {
-      void queryClient.invalidateQueries({ queryKey: DCS_WORKLIST_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: DCS_HISTORY_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: ORCH_PLAN_QUERY_KEY });
+      invalidateAfterDcsRunComplete(queryClient);
     }
-    wasScoreRunningRef.current = isScoreRunning;
+    wasScoreRunningRef.current = Boolean(isScoreRunning);
   }, [isScoreRunning, queryClient]);
 
+  const expectFreshImport = hasEligibleConnectedDcsConnectors(connectors);
+  const isFreshImportPhase = dcsStatus
+    ? isDcsFreshImportPhaseRunning(dcsStatus, {
+        expectFreshImport,
+      })
+    : false;
+  const freshImportFailedPlatform = dcsStatus
+    ? resolveFreshImportFailedPlatform(dcsStatus)
+    : null;
+  const freshImportFailedCopy = formatFreshImportFailedCopy(
+    freshImportFailedPlatform,
+  );
+  const showFreshImportFailure = Boolean(
+    freshImportFailedCopy &&
+      (dcsStatus?.latest_run?.status === "failed" ||
+        dcsStatus?.active_run?.status === "failed"),
+  );
+
+  useEffect(() => {
+    if (!pendingFreshImportAckRef.current || !dcsStatus) return;
+
+    const expectedRunId = pendingFreshImportRunIdRef.current;
+    const activeRun = dcsStatus.active_run;
+    if (expectedRunId == null || activeRun?.data_run_id !== expectedRunId) return;
+
+    if (hasFreshImportsOnRun(activeRun)) {
+      pendingFreshImportAckRef.current = false;
+      pendingFreshImportRunIdRef.current = null;
+      toast.success("Verification started", {
+        id: rerunToastIdRef.current ?? "dcs-rerun-started",
+        description:
+          "Fetched latest connector data · Manago.ai + Shopify checks running.",
+      });
+      return;
+    }
+
+    if (activeRun.status === "failed" || activeRun.status === "succeeded") {
+      pendingFreshImportAckRef.current = false;
+      pendingFreshImportRunIdRef.current = null;
+    }
+  }, [dcsStatus]);
+
   const scoreReady = dcsStatus ? isDcsScoreReady(dcsStatus) : false;
+
+  const periodWindow = useMemo(
+    () => resolveOverviewPeriodWindow(trendPeriod),
+    [trendPeriod],
+  );
+
+  const exportFixPlanMutation = useMutation({
+    mutationFn: () =>
+      downloadOverviewBrief({
+        since: periodWindow.since.toISOString(),
+        until: periodWindow.until.toISOString(),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: AUDIT_EVENTS_QUERY_KEY });
+      void queryClient.invalidateQueries({
+        queryKey: AUDIT_NOTIFICATIONS_QUERY_KEY,
+      });
+    },
+    onError: (error) => {
+      toast.error("Could not export fix plan", {
+        description: assessmentReportErrorMessage(error),
+      });
+    },
+  });
+  const exportFixPlanBusy = exportFixPlanMutation.isPending;
+  const exportFixPlanDisabled = !scoreReady || exportFixPlanBusy;
+
   const headline =
-    worklist?.headline_score ??
-    (dcsStatus ? displayHeadlineScore(dcsStatus) : null);
+    scoreReady && dcsStatus
+      ? (displayHeadlineScore(dcsStatus) ?? worklist?.headline_score ?? null)
+      : dcsStatus
+        ? displayHeadlineScore(dcsStatus)
+        : null;
   const score =
     scoreReady && headline != null ? Math.round(headline) : null;
   const scoreDisplay = score != null ? formatDcsScore(score) : null;
@@ -412,11 +672,6 @@ function DataConsistencyPage() {
         : score >= 60
           ? "#D97706"
           : "#B91C1C";
-
-  const periodWindow = useMemo(
-    () => resolveOverviewPeriodWindow(trendPeriod),
-    [trendPeriod],
-  );
 
   const { data: scoreHistoryData } = useQuery({
     queryKey: [
@@ -606,22 +861,78 @@ function DataConsistencyPage() {
                 ) : (
                   <RefreshCw className="h-3.5 w-3.5" />
                 )}
-                {isScoreRunning ? "Checks running…" : "Re-run checks"}
+                {isFreshImportPhase
+                  ? "Fetching data…"
+                  : isScoreRunning
+                    ? "Checks running…"
+                    : "Re-run checks"}
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  toast.message("Export queued", {
-                    description: "Fix plan PDF export is not available in v1.",
-                  })
-                }
-                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+                disabled={exportFixPlanDisabled}
+                onClick={() => exportFixPlanMutation.mutate()}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:pointer-events-none disabled:opacity-60"
               >
+                {exportFixPlanBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : null}
                 Export fix plan
               </button>
             </>
           }
         />
+
+        {isFreshImportPhase ? (
+          <div
+            className="mt-4 rounded-md border border-border bg-sand px-4 py-3 text-sm text-ink"
+            role="status"
+          >
+            <p className="font-medium">Fetching connector data</p>
+            <p className="mt-1 text-fog">
+              {formatFreshImportPhaseCopy()} Re-run pulls fresh Shopify and Manago
+              data before scoring.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              “Refresh status” only reloads progress on this page — it does not
+              fetch new connector data.
+            </p>
+          </div>
+        ) : null}
+
+        {showFreshImportFailure ? (
+          <div
+            className="mt-4 rounded-md border border-loss/30 bg-loss-soft px-4 py-3 text-sm text-ink"
+            role="alert"
+          >
+            <p className="font-medium">Fresh import failed</p>
+            <p className="mt-1 text-fog">{freshImportFailedCopy}</p>
+          </div>
+        ) : null}
+
+        {scoringStuck ? (
+          <div
+            className="mt-4 rounded-md border border-border bg-sand px-4 py-3 text-sm text-ink"
+            role="status"
+          >
+            <p className="font-medium">Scoring unavailable</p>
+            <p className="mt-1 text-fog">
+              Checks have been waiting for a worker. Start Redis and Celery, then
+              click Re-run — or refresh status to clear a stuck run. Refresh
+              status only polls this page; it does not fetch connector data.
+            </p>
+            <button
+              type="button"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated px-3 py-1.5 text-sm font-medium hover:bg-sand"
+              onClick={() => {
+                void refetchStatus();
+                void refetchWorklist();
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Refresh status
+            </button>
+          </div>
+        ) : null}
 
         <div className="dcc-grid mt-2">
           <div className="dcc-card">
@@ -658,7 +969,17 @@ function DataConsistencyPage() {
                     </>
                   ) : (
                     <div className="px-2 text-center text-[11px] font-medium leading-snug text-muted-foreground">
-                      {isCalculating ? (
+                      {isFreshImportPhase ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          {formatFreshImportPhaseCopy()}
+                        </span>
+                      ) : showFreshImportFailure && freshImportFailedPlatform ? (
+                        <span className="text-loss">
+                          {formatFreshImportPlatformLabel(freshImportFailedPlatform)}{" "}
+                          import failed
+                        </span>
+                      ) : isCalculating ? (
                         <span className="inline-flex items-center gap-1">
                           <Loader2 className="h-3 w-3 animate-spin" />
                           Calculating…
@@ -1117,13 +1438,12 @@ function DataConsistencyPage() {
                       </button>
 
                       {!open ? (
-                        <Link
-                          to="/fix"
-                          search={{ issue: checkId }}
-                          className="dcc-fix-cta dcc-fix-cta-sm"
-                        >
-                          Fix this issue <ArrowRight className="h-3.5 w-3.5" />
-                        </Link>
+                        <DcsIssueRowActions
+                          issue={issue}
+                          pilots={recommendations?.pilots}
+                          recommendationsPending={recommendationsPending}
+                          recommendationsSuccess={recommendationsSuccess}
+                        />
                       ) : null}
                     </div>
                   </div>
@@ -1138,6 +1458,9 @@ function DataConsistencyPage() {
                       <WorklistIssueDetail
                         checkId={checkId}
                         listIssue={issue}
+                        pilots={recommendations?.pilots}
+                        recommendationsPending={recommendationsPending}
+                        recommendationsSuccess={recommendationsSuccess}
                       />
                     </>
                   ) : null}

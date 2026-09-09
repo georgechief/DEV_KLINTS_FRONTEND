@@ -31,17 +31,21 @@ export function NotificationsPanel({
   events,
   unreadCount,
   isPending,
+  isError,
   isMarkingAll,
   onClose,
   onMarkAll,
+  onRetry,
   onItemClick,
 }: {
   events: AuditEvent[];
   unreadCount: number;
   isPending?: boolean;
+  isError?: boolean;
   isMarkingAll?: boolean;
   onClose: () => void;
   onMarkAll: () => void;
+  onRetry?: () => void;
   onItemClick?: (event: AuditEvent) => void;
 }) {
   return (
@@ -58,7 +62,7 @@ export function NotificationsPanel({
         <button
           type="button"
           onClick={onMarkAll}
-          disabled={isMarkingAll || unreadCount === 0}
+          disabled={isMarkingAll || unreadCount === 0 || isError}
           className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isMarkingAll ? "Marking…" : "Mark all read"}
@@ -69,6 +73,19 @@ export function NotificationsPanel({
           <Loader2 className="h-4 w-4 animate-spin" />
           Loading notifications…
         </div>
+      ) : isError ? (
+        <div className="px-4 py-6">
+          <p className="text-sm text-destructive">Could not load notifications.</p>
+          {onRetry ? (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="mt-3 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+            >
+              Retry
+            </button>
+          ) : null}
+        </div>
       ) : events.length === 0 ? (
         <div className="px-4 py-6 text-sm text-muted-foreground">You&apos;re all caught up.</div>
       ) : (
@@ -77,6 +94,7 @@ export function NotificationsPanel({
             const tone = normalizeTone(event.tone);
             const actor = event.actor || event.performed_by;
             const meta = resolveAuditEventMeta(event);
+            const isUnread = event.audit_read !== true;
 
             return (
               <li key={event.id}>
@@ -84,13 +102,27 @@ export function NotificationsPanel({
                   <button
                     type="button"
                     onClick={() => onItemClick(event)}
-                    className="flex w-full gap-3 px-4 py-3 text-left hover:bg-sand/60"
+                    className={`flex w-full gap-3 px-4 py-3 text-left hover:bg-sand/60 ${
+                      isUnread ? "bg-sand/30" : ""
+                    }`}
                   >
-                    <span
-                      className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${toneDotClass(tone)}`}
-                    />
+                    <span className="relative mt-1.5 flex h-2 w-2 shrink-0 items-center justify-center">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${toneDotClass(tone)}`}
+                      />
+                      {isUnread ? (
+                        <span
+                          className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-spark ring-2 ring-elevated"
+                          aria-hidden
+                        />
+                      ) : null}
+                    </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm leading-snug text-foreground">
+                      <div
+                        className={`text-sm leading-snug ${
+                          isUnread ? "font-semibold text-foreground" : "text-foreground"
+                        }`}
+                      >
                         {formatAuditEventSummary(event)}
                       </div>
                       <div className="mt-1 text-[11px] text-muted-foreground">
@@ -104,13 +136,27 @@ export function NotificationsPanel({
                   <Link
                     to="/activity"
                     onClick={onClose}
-                    className="flex gap-3 px-4 py-3 text-left hover:bg-sand/60"
+                    className={`flex gap-3 px-4 py-3 text-left hover:bg-sand/60 ${
+                      isUnread ? "bg-sand/30" : ""
+                    }`}
                   >
-                    <span
-                      className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${toneDotClass(tone)}`}
-                    />
+                    <span className="relative mt-1.5 flex h-2 w-2 shrink-0 items-center justify-center">
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full ${toneDotClass(tone)}`}
+                      />
+                      {isUnread ? (
+                        <span
+                          className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-spark ring-2 ring-elevated"
+                          aria-hidden
+                        />
+                      ) : null}
+                    </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm leading-snug text-foreground">
+                      <div
+                        className={`text-sm leading-snug ${
+                          isUnread ? "font-semibold text-foreground" : "text-foreground"
+                        }`}
+                      >
                         {formatAuditEventSummary(event)}
                       </div>
                       <div className="mt-1 text-[11px] text-muted-foreground">

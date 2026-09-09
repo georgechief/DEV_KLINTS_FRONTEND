@@ -42,11 +42,11 @@ import { type SearchHit, type SearchHitType, searchGlobal } from "@/lib/search";
 const pages = [
   { to: "/dashboard", label: "Overview", hint: "Governance overview", icon: LayoutDashboard },
   { to: "/data-consistency", label: "Data Consistency Score", hint: "DCS & integrity worklist", icon: ShieldCheck },
-  { to: "/lifecycle", label: "Lifecycle cockpit", hint: "5 groups · 11 sub-stages", icon: Layers },
+  { to: "/lifecycle", label: "Lifecycle cockpit", hint: "Rule-based architecture assessment", icon: Layers },
   { to: "/opportunities", label: "Opportunity tracker", hint: "Blocked · Opportunity · Tracked", icon: ListChecks },
-  { to: "/workflow", label: "Workflow Studio", hint: "Agent blueprints", icon: Workflow },
-  { to: "/qa", label: "QA validation", hint: "Phase 4 · gate runs", icon: ShieldCheck },
-  { to: "/handoff", label: "Agent handoff", hint: "Phase 5 · MCP/A2A packages", icon: Workflow },
+  { to: "/workflow", label: "Workflow Studio", hint: "Package blueprints", icon: Workflow },
+  { to: "/qa", label: "QA validation", hint: "Package QA gates", icon: ShieldCheck },
+  { to: "/handoff", label: "Handoff", hint: "Staged package · human activation", icon: Workflow },
   { to: "/integrations", label: "Connected stack", hint: "Manago.ai · Shopify", icon: Plug },
   { to: "/activity", label: "Activity", hint: "Governance timeline", icon: Activity },
   { to: "/settings", label: "Settings", hint: "Account & workspace", icon: Settings },
@@ -69,6 +69,24 @@ const HIT_ICONS: Record<SearchHitType, typeof ListChecks> = {
   audit: Activity,
   workflow: Workflow,
 };
+
+function resolveSpotlightPageHint(
+  to: string,
+  defaultHint: string,
+  dcsStatus?: DcsAppStatus,
+): string {
+  if (to === "/qa") {
+    return isNavRouteAllowed(dcsStatus, "/qa")
+      ? "Package QA gates"
+      : "Phase 4 · unlocks with Workflow Studio";
+  }
+  if (to === "/handoff") {
+    return isNavRouteAllowed(dcsStatus, "/handoff")
+      ? "Staged package · human activation"
+      : "Phase 5 · unlocks after QA";
+  }
+  return defaultHint;
+}
 
 function getAllowedSearchTypes(dcsStatus?: DcsAppStatus): string[] {
   const types: string[] = [];
@@ -126,6 +144,7 @@ const SECTION_LABELS: Record<OverviewSearchHit["section"], string> = {
   activity: "Recent activity",
   value: "Executive summary",
   lifecycle: "Lifecycle coverage",
+  orch: "Orchestration tasks",
 };
 
 export function SpotlightSearch({
@@ -262,12 +281,13 @@ export function SpotlightSearch({
     to: string,
     params?: Record<string, string>,
     search?: Record<string, string | undefined>,
+    hash?: string,
   ) => {
     onOpenChange(false);
     if (params) {
-      void navigate({ to, params, search } as never);
-    } else if (search) {
-      void navigate({ to, search } as never);
+      void navigate({ to, params, search, hash } as never);
+    } else if (search || hash) {
+      void navigate({ to, search, hash } as never);
     } else {
       void navigate({ to } as never);
     }
@@ -280,8 +300,9 @@ export function SpotlightSearch({
     url.searchParams.forEach((value, key) => {
       search[key] = value;
     });
-    if (Object.keys(search).length > 0) {
-      go(path, undefined, search);
+    const hash = url.hash.replace(/^#/, "") || undefined;
+    if (Object.keys(search).length > 0 || hash) {
+      go(path, undefined, Object.keys(search).length > 0 ? search : undefined, hash);
     } else {
       go(path);
     }
@@ -384,7 +405,9 @@ export function SpotlightSearch({
                     <Icon />
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span>{highlightMatch(p.label, query)}</span>
-                      <span className="text-[11px] text-muted-foreground">{p.hint}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        {highlightMatch(resolveSpotlightPageHint(p.to, p.hint, dcsStatus), query)}
+                      </span>
                     </div>
                   </CommandItem>
                 );

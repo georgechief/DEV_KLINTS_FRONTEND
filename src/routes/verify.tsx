@@ -1,8 +1,9 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { Mail, ArrowRight } from "lucide-react";
+import { Mail, ArrowRight, Loader2 } from "lucide-react";
 import { KlintsLogo } from "@/components/klints/KlintsLogo";
 import { toast } from "sonner";
 import { useEffect, useState } from "react";
+import { resendVerificationEmail } from "@/lib/auth";
 
 export const Route = createFileRoute("/verify")({
   head: () => ({ meta: [{ title: "Verify your email — Klints" }] }),
@@ -11,16 +12,39 @@ export const Route = createFileRoute("/verify")({
 
 function Verify() {
   const navigate = useNavigate();
+  const [email, setEmail] = useState("");
+  const [resending, setResending] = useState(false);
 
-const [email, setEmail] = useState("");
+  useEffect(() => {
+    const savedEmail = sessionStorage.getItem("verification_email");
+    if (savedEmail) {
+      setEmail(savedEmail);
+    }
+  }, []);
 
-useEffect(() => {
-  const savedEmail = sessionStorage.getItem("verification_email");
+  async function handleResend() {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      toast.error("Email required", {
+        description: "Use the same address you signed up with.",
+      });
+      return;
+    }
 
-  if (savedEmail) {
-    setEmail(savedEmail);
+    setResending(true);
+    try {
+      const response = await resendVerificationEmail(trimmed);
+      toast.success(response.detail || "Verification link sent", {
+        description: "Check spam if it doesn't arrive in a minute.",
+      });
+    } catch {
+      toast.error("Could not resend verification link", {
+        description: "Try again in a moment.",
+      });
+    } finally {
+      setResending(false);
+    }
   }
-}, []);
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-sand px-4">
@@ -43,19 +67,23 @@ useEffect(() => {
           className="mt-6 inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
           Continue (demo) <ArrowRight className="h-4 w-4" />
-          </button>
+        </button>
         <p className="mt-4 text-xs text-muted-foreground">
-          Didn't get it?{" "}
+          Didn&apos;t get it?{" "}
           <button
             type="button"
-            onClick={() =>
-              toast.success("Verification link resent", {
-                description: "Check spam if it doesn’t arrive in a minute.",
-              })
-            }
-            className="font-medium text-anchor hover:underline"
+            onClick={() => void handleResend()}
+            disabled={resending}
+            className="inline-flex items-center gap-1 font-medium text-anchor hover:underline disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Resend link
+            {resending ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Sending…
+              </>
+            ) : (
+              "Resend link"
+            )}
           </button>
         </p>
       </div>

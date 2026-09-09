@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/chart";
 import { formatDcsRevenue, DCS_BUILD_READY_THRESHOLD } from "@/lib/dcs";
 import { formatCurrency, issues } from "@/lib/klints-data";
+import { LEGACY_WORKFLOW_TO_UC, workflowStudioLink } from "@/lib/use-cases";
 import { roundDisplayScore, formatDisplayCount } from "@/lib/presentation";
 import { Link } from "@tanstack/react-router";
 import {
@@ -439,16 +440,18 @@ export function OverviewStakeBreakdown({
 
   return (
     <div className="ov-stake-list">
-      {rows.map((row) => (
+      {rows.map((row) => {
+        const uc = LEGACY_WORKFLOW_TO_UC[row.workflowId];
+        const studio = uc ? workflowStudioLink({ uc }) : null;
+        return (
         <Link
           key={row.id}
-          to="/workflow/$id"
-          params={{ id: row.workflowId }}
-          search={{ issue: row.id }}
+          to={studio ? studio.to : "/fix"}
+          search={studio ? studio.search : { issue: row.id }}
           className="ov-stake-row"
           title={`${row.title} · ${formatCurrency(row.value, { compact: true })} / q`}
         >
-          <span className="ov-stake-id">{row.workflowId}</span>
+          <span className="ov-stake-id">{studio ? uc : row.id}</span>
           <div className="ov-stake-track">
             <div
               className="ov-stake-fill"
@@ -459,7 +462,8 @@ export function OverviewStakeBreakdown({
             {formatCurrency(row.value, { compact: true })}
           </span>
         </Link>
-      ))}
+        );
+      })}
     </div>
   );
 }

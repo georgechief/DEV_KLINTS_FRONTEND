@@ -21,14 +21,21 @@ import {
   ArrowRight,
   Lock,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, useMemo, type ReactNode } from "react";
 import { toast } from "sonner";
 import { KlintsLogo } from "@/components/klints/KlintsLogo";
 import {
   DCS_STATUS_QUERY_KEY,
   DCS_STATUS_STALE_MS,
+  getDcsRunningRefetchInterval,
+  invalidateAfterDcsRunComplete,
+  refreshConnectorsThenDcsStatus,
 } from "@/lib/app-access";
 import { clearAuth, getAccessToken, getCurrentUser, isUnauthorizedError, userInitials } from "@/lib/auth";
+import {
+  isConnectorBootstrapInFlight,
+  listConnectors,
+} from "@/lib/connectors";
 import {
   DCS_BUILD_READY_THRESHOLD,
   DCS_WORKLIST_QUERY_KEY,
@@ -37,6 +44,7 @@ import {
   getDcsStatus,
   getDcsWorklist,
   isAppLocked,
+  isDcsScoreHiddenAfterFailure,
   isDcsScoreReady,
   isNavRouteAllowed,
   type DcsAppStatus,
@@ -50,17 +58,34 @@ import {
   listAuditNotifications,
   markAllAuditRead,
   markAuditEventRead,
+  resolveAuditDeepLink,
   type AuditEvent,
 } from "@/lib/audit";
 import { SpotlightSearch } from "@/components/klints/SpotlightSearch";
 import { NotificationsPanel } from "@/components/klints/NotificationsPanel";
 import { FlowStepper, stepKeyFromPath } from "@/components/klints/FlowStepper";
+import { KlintsLoader } from "@/components/klints/KlintsLoader";
 import {
   getFixFlowIssueIdFromSearch,
+  findWorklistIssueByCheckId,
+  isFixtureIssueId,
   needsFixFlowWorklist,
   parseFixFlowSearch,
   resolveFixFlowIssueTitle,
 } from "@/lib/fix-flow";
+import {
+  deriveJourneyStage,
+  getUseCaseRecommendations,
+  parseWorkflowSearch,
+  UC_RECOMMENDATIONS_QUERY_KEY,
+  UC_STALE_MS,
+} from "@/lib/use-cases";
+import {
+  getLatestPackageQa,
+  isQaPass,
+  packageQaQueryKey,
+  QA_STALE_MS,
+} from "@/lib/qa";
 
 const SCORE_CHIP_CIRC = 2 * Math.PI * 13;
 
@@ -74,7 +99,7 @@ const navFixFlow = [
   { to: "/fix", label: "Fix", icon: Wrench, phase: "2" },
   { to: "/workflow", label: "Workflow Studio", icon: Workflow, phase: "3" },
   { to: "/qa", label: "QA validation", icon: Shield, phase: "4" },
-  { to: "/handoff", label: "Agent handoff", icon: Send, phase: "5" },
+  { to: "/handoff", label: "Handoff", icon: Send, phase: "5" },
 ] as const;
 
 const navReference = [
@@ -243,6 +268,9 @@ export function AppShell({
   const fixFlowSearch = useRouterState({
     select: (r) => parseFixFlowSearch(r.location.search as Record<string, unknown>),
   });
+  const workflowSearch = useRouterState({
+    select: (r) => parseWorkflowSearch(r.location.search as Record<string, unknown>),
+  });
   const flowStep = stepKeyFromPath(pathname);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -269,6 +297,26 @@ export function AppShell({
     Boolean(currentUser) &&
     currentUser?.needs_connector !== true;
 
+  const { data: shellConnectors } = useQuery({
+    queryKey: ["connectors"],
+    queryFn: listConnectors,
+    enabled: dcsQueryEnabled,
+    staleTime: DCS_STATUS_STALE_MS,
+    refetchInterval: (query) =>
+      isConnectorBootstrapInFlight(query.state.data) ? DCS_STATUS_STALE_MS : false,
+  });
+  const bootstrapPending = isConnectorBootstrapInFlight(shellConnectors);
+
+  // After Shopify/Manago reconnect, bootstrap finishes then BE enqueues DCS —
+  // refetch connectors so expectDcsSoon polling can start immediately.
+  const wasBootstrapPendingRef = useRef(false);
+  useEffect(() => {
+    if (wasBootstrapPendingRef.current && !bootstrapPending) {
+      void refreshConnectorsThenDcsStatus(queryClient);
+    }
+    wasBootstrapPendingRef.current = bootstrapPending;
+  }, [bootstrapPending, queryClient]);
+
   const {
     data: dcsStatus,
     isPending: dcsStatusPending,
@@ -279,13 +327,16 @@ export function AppShell({
     enabled: dcsQueryEnabled,
     staleTime: DCS_STATUS_STALE_MS,
     refetchInterval: (query) =>
-      query.state.data?.app_access === "soft_locked_running"
-        ? DCS_STATUS_STALE_MS
-        : false,
+      getDcsRunningRefetchInterval(query.state.data, Date.now(), {
+        expectDcsSoon: bootstrapPending,
+      }),
   });
 
   const fixFlowNeedsWorklist = needsFixFlowWorklist(fixFlowSearch);
-  const { data: fixFlowWorklist } = useQuery({
+  const {
+    data: fixFlowWorklist,
+    isPending: fixFlowWorklistPending,
+  } = useQuery({
     queryKey: DCS_WORKLIST_QUERY_KEY,
     queryFn: getDcsWorklist,
     enabled: dcsQueryEnabled && fixFlowNeedsWorklist && Boolean(flowStep),
@@ -297,23 +348,148 @@ export function AppShell({
     resolveFixFlowIssueTitle(fixFlowSearch, fixFlowWorklist?.issues) ??
     null;
 
+  const liveStepperIssue =
+    issueIdFromSearch && !isFixtureIssueId(issueIdFromSearch)
+      ? issueIdFromSearch
+      : undefined;
+
+  const fixFlowWorklistLoading =
+    fixFlowNeedsWorklist &&
+    Boolean(flowStep) &&
+    Boolean(liveStepperIssue) &&
+    fixFlowWorklistPending;
+
+  const {
+    data: stepperRecommendations,
+    isPending: stepperRecsPending,
+    isSuccess: stepperRecsSuccess,
+    isError: stepperRecsError,
+  } = useQuery({
+    queryKey: UC_RECOMMENDATIONS_QUERY_KEY,
+    queryFn: getUseCaseRecommendations,
+    staleTime: UC_STALE_MS,
+    enabled: dcsQueryEnabled && Boolean(flowStep) && Boolean(liveStepperIssue),
+  });
+
+  const stepperPackageId = workflowSearch.package_id;
+  const {
+    data: stepperQa,
+    isPending: stepperQaPending,
+    isFetching: stepperQaFetching,
+    isSuccess: stepperQaSuccess,
+    isFetched: stepperQaFetched,
+  } = useQuery({
+    queryKey: packageQaQueryKey(stepperPackageId ?? ""),
+    queryFn: () => getLatestPackageQa(stepperPackageId!),
+    enabled: dcsQueryEnabled && Boolean(flowStep) && Boolean(stepperPackageId),
+    staleTime: QA_STALE_MS,
+    retry: false,
+  });
+
+  const qaMatchesPackage =
+    Boolean(stepperPackageId) &&
+    Boolean(stepperQa) &&
+    (stepperQa!.package_id === stepperPackageId ||
+      stepperQa!.object_id === stepperPackageId);
+
+  const stepperQaStatus: "PASS" | "FAIL" | null | undefined = !stepperPackageId
+    ? undefined
+    : stepperQaSuccess && qaMatchesPackage && isQaPass(stepperQa)
+      ? "PASS"
+      : stepperQaSuccess && qaMatchesPackage
+        ? "FAIL"
+        : stepperQaFetched
+          ? null
+          : undefined;
+
+  // Pending = first load, or refetch with no trustworthy matched result yet.
+  const stepperQaAwaiting =
+    Boolean(stepperPackageId) &&
+    (stepperQaPending ||
+      (stepperQaFetching && stepperQaStatus !== "PASS" && stepperQaStatus !== "FAIL"));
+
+  const stepperJourney =
+    flowStep && liveStepperIssue
+      ? {
+          pilots: stepperRecommendations?.pilots,
+          recommendationsPending: stepperRecsPending,
+          recommendationsSuccess: stepperRecsSuccess,
+          recommendationsError: stepperRecsError,
+          packageId: stepperPackageId,
+          ucFromSearch: workflowSearch.uc,
+          qaStatus: stepperQaStatus ?? null,
+          qaPending: stepperQaAwaiting,
+          qaRunId: qaMatchesPackage ? stepperQa?.qa_run_id : undefined,
+        }
+      : flowStep
+        ? {
+            pilots: undefined,
+            recommendationsPending: false,
+            recommendationsSuccess: true,
+            recommendationsError: false,
+            packageId: stepperPackageId,
+            ucFromSearch: workflowSearch.uc,
+            qaStatus: stepperQaStatus ?? null,
+            qaPending: stepperQaAwaiting,
+            qaRunId: qaMatchesPackage ? stepperQa?.qa_run_id : undefined,
+          }
+        : undefined;
+
+  const worklistIssueStatus = useMemo(() => {
+    if (!liveStepperIssue || !fixFlowWorklist?.issues) return null;
+    return findWorklistIssueByCheckId(fixFlowWorklist.issues, liveStepperIssue)?.status ?? null;
+  }, [liveStepperIssue, fixFlowWorklist?.issues]);
+
+  const derivedFlowStep = useMemo(() => {
+    if (!flowStep) return null;
+    return deriveJourneyStage({
+      pathname,
+      issueId: issueIdFromSearch,
+      isFixture: Boolean(issueIdFromSearch && isFixtureIssueId(issueIdFromSearch)),
+      issueStatus: worklistIssueStatus,
+      ucFromSearch: workflowSearch.uc,
+      packageId: stepperPackageId,
+      pilots: stepperRecommendations?.pilots,
+      recommendationsSuccess: liveStepperIssue ? stepperRecsSuccess : undefined,
+      worklistPending: fixFlowWorklistLoading,
+      qaStatus: stepperQaStatus ?? null,
+    });
+  }, [
+    flowStep,
+    pathname,
+    issueIdFromSearch,
+    worklistIssueStatus,
+    workflowSearch.uc,
+    stepperPackageId,
+    stepperRecommendations?.pilots,
+    liveStepperIssue,
+    stepperRecsSuccess,
+    fixFlowWorklistLoading,
+    stepperQaStatus,
+  ]);
+
   const isScoreRunning =
+    Boolean(dcsStatus?.scheduled) ||
     dcsStatus?.app_access === "soft_locked_running" ||
     dcsStatus?.active_run?.status === "pending" ||
     dcsStatus?.active_run?.status === "running";
 
-  // When a DCS score run finishes anywhere in the app, refresh worklist + plan
-  // (Overview / Opportunities stay correct without visiting Data Center).
+  // When a DCS score run finishes anywhere in the app, refresh dependent caches
+  // (worklist, history, pilots, architecture, orch plan).
   const wasScoreRunningRef = useRef(false);
   useEffect(() => {
     if (wasScoreRunningRef.current && !isScoreRunning) {
-      void queryClient.invalidateQueries({ queryKey: DCS_WORKLIST_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: ORCH_PLAN_QUERY_KEY });
+      invalidateAfterDcsRunComplete(queryClient);
     }
     wasScoreRunningRef.current = Boolean(isScoreRunning);
   }, [isScoreRunning, queryClient]);
 
-  const { data: auditNotifications, isPending: auditNotificationsPending } = useQuery({
+  const {
+    data: auditNotifications,
+    isPending: auditNotificationsPending,
+    isError: auditNotificationsError,
+    refetch: refetchAuditNotifications,
+  } = useQuery({
     queryKey: AUDIT_NOTIFICATIONS_QUERY_KEY,
     queryFn: () => listAuditNotifications({ limit: 5 }),
     enabled: authStatus === "authed",
@@ -350,9 +526,16 @@ export function AppShell({
     try {
       await markAuditEventReadMutation.mutateAsync(event.id);
     } catch {
-      // Still navigate to Activity if mark-read fails.
+      // Still navigate if mark-read fails.
     }
-    void navigate({ to: "/activity" });
+    const link = resolveAuditDeepLink(event, {
+      fixAllowed: isNavRouteAllowed(dcsStatus, "/fix"),
+    });
+    void navigate({
+      to: link.to,
+      search: link.search,
+      hash: link.hash,
+    } as never);
   }
 
   const failIssueCount =
@@ -519,7 +702,9 @@ export function AppShell({
         )
       : null;
 
-  return isAuthed ? (
+  return authStatus === "pending" ? (
+    <KlintsLoader label="Loading workspace…" />
+  ) : isAuthed ? (
     <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
       <aside className="hidden h-full w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
         <div className="flex h-16 shrink-0 items-center border-b border-sidebar-border px-5">
@@ -720,9 +905,11 @@ export function AppShell({
                 events={notificationEvents}
                 unreadCount={unreadCount}
                 isPending={auditNotificationsPending}
+                isError={auditNotificationsError}
                 isMarkingAll={markAllAuditReadMutation.isPending}
                 onClose={() => setNotifOpen(false)}
                 onMarkAll={() => markAllAuditReadMutation.mutate()}
+                onRetry={() => void refetchAuditNotifications()}
                 onItemClick={(event) => void handleNotificationItemClick(event)}
               />
             )}
@@ -735,10 +922,13 @@ export function AppShell({
               Could not load Data Consistency Score status. Refresh to try again.
             </div>
           )}
-          {dcsStatus && isAppLocked(dcsStatus) && (
+          {dcsStatus &&
+            (isAppLocked(dcsStatus) || isDcsScoreHiddenAfterFailure(dcsStatus)) && (
             <DcsLockBanner status={dcsStatus} />
           )}
-          {dcsStatus?.app_access === "unlocked" && dcsStatus.scheduled && (
+          {dcsStatus?.app_access === "unlocked" &&
+            dcsStatus.scheduled &&
+            !isDcsScoreHiddenAfterFailure(dcsStatus) && (
             <div className="mb-6 rounded-lg border border-primary/25 bg-primary/5 px-4 py-3">
               <div className="flex items-center gap-2 text-[13px] text-foreground">
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin text-primary" />
@@ -746,12 +936,13 @@ export function AppShell({
               </div>
             </div>
           )}
-          {flowStep && (
+          {flowStep && derivedFlowStep && (
             <FlowStepper
-              current={flowStep}
+              current={derivedFlowStep}
               issueId={issueIdFromSearch}
               issueTitle={resolvedIssueTitle}
               dataCenterAllowed={dcsNavAllowed}
+              journey={stepperJourney}
             />
           )}
           {children}
@@ -772,12 +963,38 @@ export function PageTitle({
   kicker,
   description,
   actions,
+  variant = "default",
 }: {
   title: string;
   kicker?: string;
   description?: string;
   actions?: ReactNode;
+  /** `design` matches the client-approved Frontend_design PageTitle. */
+  variant?: "default" | "design";
 }) {
+  if (variant === "design") {
+    return (
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          {kicker && (
+            <div className="text-[10px] font-medium uppercase tracking-[0.12em] text-fog">
+              {kicker}
+            </div>
+          )}
+          <h1 className="font-display mt-1.5 text-[1.5rem] font-semibold tracking-tight text-foreground md:text-[1.65rem]">
+            {title}
+          </h1>
+          {description && (
+            <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
+              {description}
+            </p>
+          )}
+        </div>
+        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      </div>
+    );
+  }
+
   return (
     <div className="mb-8 flex flex-wrap items-end justify-between gap-6">
       <div className="min-w-0">

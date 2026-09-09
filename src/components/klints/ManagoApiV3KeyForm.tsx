@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { PasswordInput } from "@/components/klints/PasswordInput";
-import { DCS_STATUS_QUERY_KEY } from "@/lib/app-access";
+import { refreshConnectorsThenDcsStatus } from "@/lib/app-access";
 import { getApiErrorMessage, setManagoApiV3Key } from "@/lib/connectors";
 import { cn } from "@/lib/utils";
 
@@ -55,14 +55,13 @@ export function ManagoApiV3KeyForm({
 
   const saveMutation = useMutation({
     mutationFn: (key: string) => setManagoApiV3Key(key),
-    onSuccess: () => {
+    onSuccess: async () => {
       toast.success("API v3 key saved", {
         description: "Manago catalog checks can use this key on the next run.",
       });
       setDraftKey("");
       setSaveError(null);
-      void queryClient.invalidateQueries({ queryKey: ["connectors"] });
-      void queryClient.invalidateQueries({ queryKey: DCS_STATUS_QUERY_KEY });
+      await refreshConnectorsThenDcsStatus(queryClient);
       onSuccess?.();
     },
     onError: (err) => {

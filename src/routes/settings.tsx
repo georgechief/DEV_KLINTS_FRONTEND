@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AppShell, PageTitle } from "@/components/klints/AppShell";
 import { Section } from "@/components/klints/primitives";
+import { Switch } from "@/components/ui/switch";
 import { Loader2, LogOut, Plus, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatDisplayDate } from "@/lib/datetime";
@@ -9,7 +10,9 @@ import { toast } from "sonner";
 import {
   changePassword,
   clearAuth,
+  companyWritebackExecuteEnabled,
   getCurrentUser,
+  syncCurrentUserWritebackFlag,
   updateCurrentUser,
   updateWorkspace,
   type UpdateWorkspacePayload,
@@ -75,6 +78,7 @@ function SettingsPage() {
   const [tenantName, setTenantName] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [companyDomain, setCompanyDomain] = useState("");
+  const [writebackExecuteEnabled, setWritebackExecuteEnabled] = useState<boolean | null>(null);
   const [tenantNameError, setTenantNameError] = useState<string | null>(null);
   const [companyNameError, setCompanyNameError] = useState<string | null>(null);
   const [companyDomainError, setCompanyDomainError] = useState<string | null>(null);
@@ -87,6 +91,12 @@ function SettingsPage() {
   });
 
   const canEditWorkspace = currentUser?.role === "admin";
+
+  // Derive toggle display value: use local pending state if set, otherwise fall back to server value.
+  // This means the toggle ALWAYS shows the server value on mount (no flicker to false),
+  // and shows the user's in-progress change after they toggle.
+  const serverWritebackEnabled = companyWritebackExecuteEnabled(currentUser?.company ?? null);
+  const effectiveWritebackEnabled = writebackExecuteEnabled ?? serverWritebackEnabled;
 
   const {
     data: members,
@@ -180,10 +190,14 @@ function SettingsPage() {
       setTenantName(data.tenant.name);
       setCompanyName(data.company.name);
       setCompanyDomain(data.company.domain);
+      const enabled = companyWritebackExecuteEnabled(data.company);
+      syncCurrentUserWritebackFlag(queryClient, enabled);
+      // Set local state to the confirmed server value so there is zero render gap.
+      // The useEffect will later reset it to null once currentUser re-renders with updated data.
+      setWritebackExecuteEnabled(enabled);
       setTenantNameError(null);
       setCompanyNameError(null);
       setCompanyDomainError(null);
-      void queryClient.invalidateQueries({ queryKey: ["auth", "me"] });
     },
     onError: (err) => {
       const tenantErr = getFieldError(err, "tenant_name");
@@ -257,12 +271,15 @@ function SettingsPage() {
   }, [tabParam]);
 
   useEffect(() => {
-    if (currentUser) {
-      setName(currentUser.name);
-      setTenantName(currentUser.tenant.name);
-      setCompanyName(currentUser.company?.name ?? "");
-      setCompanyDomain(currentUser.company?.domain ?? "");
-    }
+    if (!currentUser) return;
+    setName(currentUser.name);
+    setTenantName(currentUser.tenant.name);
+    setCompanyName(currentUser.company?.name ?? "");
+    setCompanyDomain(currentUser.company?.domain ?? "");
+    // Do NOT touch writebackExecuteEnabled here.
+    // On mount: state starts null → effectiveWritebackEnabled reads server value directly.
+    // After toggle: state is true/false → effectiveWritebackEnabled uses that until next mount.
+    // After save: onSuccess sets state to the confirmed value — no reset needed here.
   }, [currentUser]);
 
   useEffect(() => {
@@ -354,8 +371,14 @@ function SettingsPage() {
   const workspaceUnchanged = currentUser
     ? tenantName === currentUser.tenant.name &&
       companyName === (currentUser.company?.name ?? "") &&
-      companyDomain === (currentUser.company?.domain ?? "")
+      companyDomain === (currentUser.company?.domain ?? "") &&
+      effectiveWritebackEnabled ===
+        companyWritebackExecuteEnabled(currentUser.company)
     : true;
+  const writebackToggleDirty =
+    currentUser != null &&
+    writebackExecuteEnabled != null &&
+    writebackExecuteEnabled !== companyWritebackExecuteEnabled(currentUser.company);
 
   function handleSaveProfile() {
     if (!currentUser) return;
@@ -416,11 +439,16 @@ function SettingsPage() {
     if (companyDomain !== (currentUser.company?.domain ?? "")) {
       payload.company_domain = companyDomain;
     }
+    if (effectiveWritebackEnabled !== companyWritebackExecuteEnabled(currentUser.company)) {
+      payload.writeback_execute_enabled = effectiveWritebackEnabled;
+    }
 
     if (Object.keys(payload).length === 0) return;
 
     updateWorkspaceMutation.mutate(payload);
   }
+
+  // NOTE: toggle is local-only; save button persists the workspace.
 
   return (
     <AppShell title="Settings" subtitle="Account & workspace">
@@ -467,7 +495,10 @@ function SettingsPage() {
                   />
                   <Field label="Email" defaultValue={currentUser.email} readOnly />
                   <Field label="Role" defaultValue={roleLabel(currentUser.role)} readOnly />
-                  <Field label="Timezone" defaultValue="Coming soon" readOnly />
+                  <ComingSoonField
+                    label="Timezone"
+                    helper="Workspace timezone will be configurable in a later release."
+                  />
                   <button
                     type="button"
                     onClick={handleSaveProfile}
@@ -570,7 +601,10 @@ function SettingsPage() {
                   disabled={!canEditWorkspace || updateWorkspaceMutation.isPending}
                   error={companyNameError}
                 />
-                <Field label="Industry" defaultValue="Coming soon" readOnly />
+                <ComingSoonField
+                  label="Industry"
+                  helper="Industry classification is not editable yet."
+                />
                 <Field
                   label="Website"
                   value={companyDomain}
@@ -578,7 +612,35 @@ function SettingsPage() {
                   disabled={!canEditWorkspace || updateWorkspaceMutation.isPending}
                   error={companyDomainError}
                 />
-                <Field label="Reporting currency" defaultValue="Coming soon" readOnly />
+                <div className="rounded-lg border border-border p-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium">Allow writebacks</p>
+                      <p className="text-xs text-muted-foreground">
+                        {writebackToggleDirty
+                          ? "Unsaved change — Save workspace to apply Allow writebacks."
+                          : effectiveWritebackEnabled
+                            ? "When on, analysts can request writeback approval on Fix and admins can Approve & write. Writes go to your connected Manago and Shopify accounts."
+                            : "Writebacks are off. Fix can preview and download evidence; Approve will not write."}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={effectiveWritebackEnabled}
+                      onCheckedChange={(nextChecked) => {
+                        setWritebackExecuteEnabled(nextChecked);
+                      }}
+                      disabled={
+                        !canEditWorkspace ||
+                        updateWorkspaceMutation.isPending
+                      }
+                      aria-label="Allow writebacks"
+                    />
+                  </div>
+                </div>
+                <ComingSoonField
+                  label="Reporting currency"
+                  helper="Reporting currency will follow company settings in a later release."
+                />
                 <button
                   type="button"
                   onClick={handleSaveWorkspace}
@@ -594,6 +656,11 @@ function SettingsPage() {
                   ) : null}
                   Save
                 </button>
+                {!workspaceUnchanged && canEditWorkspace ? (
+                  <p className="text-xs text-muted-foreground">
+                    Unsaved workspace changes — click Save to apply.
+                  </p>
+                ) : null}
               </>
             ) : null}
           </div>
@@ -820,6 +887,26 @@ function getFieldError(err: unknown, field: string): string | null {
     if (typeof value === "string") return value;
   }
   return null;
+}
+
+function ComingSoonField({
+  label,
+  helper,
+}: {
+  label: string;
+  helper: string;
+}) {
+  return (
+    <div className="block">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <span className="rounded bg-sand px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Coming soon
+        </span>
+      </div>
+      <p className="mt-1 text-sm text-muted-foreground">{helper}</p>
+    </div>
+  );
 }
 
 function Field({

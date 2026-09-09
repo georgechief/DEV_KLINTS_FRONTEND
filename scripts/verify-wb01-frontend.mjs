@@ -117,21 +117,21 @@ function testPreviewFormatter() {
   console.log("\n1. Preview table formatter (PRD §9)");
 
   const sample = {
-    check_id: "LE-04",
+    check_id: "CC-03",
     mode: "dry_run",
     diff_hash: "a".repeat(64),
     blocked_reason: null,
-    irreversible: true,
-    operator_disclosure: "Duplicate event cleanup may not be reversible in bulk.",
+    irreversible: false,
+    operator_disclosure: null,
     intents: [
       {
-        op_kind: "tag_add",
-        operation: "manago.tag_add.duplicate_review",
+        op_kind: "detail_set",
+        operation: "manago.detail_set.klints_consent_evidence",
         target: "manago",
-        namespace: "klints:",
+        namespace: "klints_",
         entity_key: "a***@example.com",
-        before: { tag: null },
-        after: { tag: "klints:duplicate_review" },
+        before: { klints_consent_evidence: null },
+        after: { klints_consent_evidence: "shopify_verified" },
         status: "ready",
         error_reason: null,
       },
@@ -155,8 +155,11 @@ function testPreviewFormatter() {
   if (table.helper.includes("Dry-run preview")) pass("helper mentions dry-run");
   else fail("helper mentions dry-run");
 
-  if (table.helper.includes("not be reversible")) pass("irreversible disclosure in helper");
-  else fail("irreversible disclosure in helper");
+  if (table.rows[0][4].includes("shopify_verified")) {
+    pass("after cell shows friendly values");
+  } else {
+    fail("after cell shows friendly values", table.rows[0][4]);
+  }
 
   if (table.summaryLine === "1 ready · 0 skipped · 0 errors") {
     pass("summary line counts intents");
@@ -169,12 +172,13 @@ function testMappingGate() {
   console.log("\n2. Mapping enabled gate");
 
   const mappings = [
-    { check_id: "LE-04", enabled: true },
+    { check_id: "CC-03", enabled: true },
     { check_id: "CI-01", enabled: true },
+    { check_id: "WB-SHOP-01", enabled: true },
     { check_id: "SP-01", enabled: false },
   ];
 
-  if (isWritebackMappingEnabled(mappings, "le-04")) pass("enabled mapping detected case-insensitively");
+  if (isWritebackMappingEnabled(mappings, "cc-03")) pass("enabled mapping detected case-insensitively");
   else fail("enabled mapping detected case-insensitively");
 
   if (!isWritebackMappingEnabled(mappings, "SP-01")) pass("disabled mapping rejected");
@@ -189,18 +193,21 @@ function testStaticWiring() {
 
   const writebacks = readSrc("src/lib/writebacks.ts");
   assertIncludes(writebacks, "writebacks.ts", '"/api/v1/writebacks/mappings/"', "mappings API wired");
-  assertIncludes(writebacks, "writebacks.ts", '"/api/v1/writebacks/preview/"', "preview API wired");
+  assertIncludes(writebacks, "writebacks.ts", '"/api/v1/writebacks/run/"', "preview API wired via /run/");
+  assertIncludes(writebacks, "writebacks.ts", 'action: "preview"', "preview uses unified action key");
   assertIncludes(writebacks, "writebacks.ts", "writebackPreviewToTable", "preview table formatter exported");
   assertIncludes(writebacks, "writebacks.ts", "writebackPreviewMeta", "preview meta helper exported");
   assertIncludes(writebacks, "writebacks.ts", "isWritebackMappingEnabled", "mapping gate exported");
   assertNotIncludes(writebacks, "writebacks.ts", "/writebacks/execute/", "no execute API on FE yet");
+  assertNotIncludes(writebacks, "writebacks.ts", '"action": "execute"', "FE does not send execute action");
 
   const fixPage = readSrc("src/routes/fix.tsx");
   assertIncludes(fixPage, "fix.tsx", "getWritebackMappings", "Fix loads mappings");
   assertIncludes(fixPage, "fix.tsx", "previewWriteback", "Fix calls preview API");
   assertIncludes(fixPage, "fix.tsx", "Writeback preview", "preview button label present");
   assertIncludes(fixPage, "fix.tsx", 'previewTab === "writeback"', "writeback tab state");
-  assertIncludes(fixPage, "fix.tsx", "Approve writeback · Coming soon", "approve stays coming soon");
+  assertIncludes(fixPage, "fix.tsx", 'data-testid="writeback-request-approval"', "approve/request CTA wired");
+  assertNotIncludes(fixPage, "fix.tsx", "Approve writeback · Coming soon", "no Coming soon on approve");
   assertNotIncludes(fixPage, "fix.tsx", "queued for Manago", "no fake Manago queued toast");
   assertNotIncludes(fixPage, "fix.tsx", "/writebacks/execute/", "no execute call in Fix page");
 

@@ -169,7 +169,7 @@ function testStaticFiles() {
 
   const livePlan = readSrc("src/lib/fix-live-plan.ts");
   assertIncludes(livePlan, "fix-live-plan.ts", "export function buildLiveFixPlan", "buildLiveFixPlan exported");
-  assertIncludes(livePlan, "fix-live-plan.ts", "Sandbox writeback · Coming soon", "honest test badge");
+  assertIncludes(livePlan, "fix-live-plan.ts", "Sandboxed test complete · ready for approval", "design test badge");
   assertIncludes(livePlan, "fix-live-plan.ts", "No row-level preview yet", "honest empty preview row");
 
   assertIncludes(livePlan, "fix-live-plan.ts", 'k: "Evidence"', "Evidence kv row in live plan");
@@ -177,12 +177,12 @@ function testStaticFiles() {
 
   const fixPage = readSrc("src/routes/fix.tsx");
   assertNotIncludes(fixPage, "fix.tsx", "queued for Manago", "no Manago queued toast anywhere");
-  assertIncludes(fixPage, "fix.tsx", "Approve writeback · Coming soon", "approve always coming soon");
+  assertIncludes(fixPage, "fix.tsx", "Approve writeback", "approve matches approved design");
+  assertNotIncludes(fixPage, "fix.tsx", "Approve writeback · Coming soon", "no Coming soon on approve");
   assertIncludes(fixPage, "fix.tsx", "getDcsWorklist", "Fix loads DCS worklist");
   assertIncludes(fixPage, "fix.tsx", "resolveFixTarget", "Fix uses resolveFixTarget");
   assertIncludes(fixPage, "fix.tsx", "buildLiveFixPlan", "Fix rebuilds plan with detail");
   assertIncludes(fixPage, "fix.tsx", 'hash="dcs-issues"', "Switch issue scrolls to worklist");
-  assertIncludes(fixPage, "fix.tsx", "disabled", "approve button disabled");
   assertIncludes(
     fixPage,
     "fix.tsx",
@@ -260,8 +260,8 @@ function mockBuildLiveFixPlan(issue) {
     previewRows: items.length
       ? items.map((item) => [item.locator, item.source, item.value, "observed"])
       : [["—", "—", "—", "No row-level preview yet"]],
-    testBadge: "Sandbox writeback · Coming soon",
-    ctaLabel: "Build · Coming soon",
+    testBadge: "Sandboxed test complete · ready for approval",
+    ctaLabel: "Approve fix → Proceed to Workflow Studio",
   };
 }
 

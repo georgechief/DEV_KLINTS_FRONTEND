@@ -34,13 +34,16 @@ import {
   ORCH_STALE_MS,
   type OrchPlanTask,
 } from "@/lib/orchestration";
-import { getIssueById } from "@/lib/fix-flow";
 import {
   getUseCase,
   getUseCaseRecommendations,
+  isBuildableStatus,
+  isSupplementalGate,
+  isSupplementalBlocker,
   parseUseCaseSearch,
   pilotStatusLabel,
   pilotStatusTone,
+  supplementalBlockingEntries,
   UC_DETAIL_QUERY_KEY,
   UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
@@ -89,15 +92,12 @@ function daysSince(iso: string): number {
   return Math.floor((today.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
-/** Live DCS check_ids open Data Center until Fix binds live worklist (same as Overview NBA). */
+/** Live DCS check_ids open Fix (PRD-FE-13 §8). */
 function planOpenTarget(checkId: string): {
-  to: "/fix" | "/data-consistency";
-  search: { issue: string } | { check: string };
+  to: "/fix";
+  search: { issue: string };
 } {
-  if (getIssueById(checkId)) {
-    return { to: "/fix", search: { issue: checkId } };
-  }
-  return { to: "/data-consistency", search: { check: checkId } };
+  return { to: "/fix", search: { issue: checkId } };
 }
 
 type LiveTrackerRow = TrackerRow & {
@@ -193,6 +193,17 @@ function checkResultClass(result: string): string {
 
 function BlockerDeepLink({ blocker }: { blocker: UseCaseBlocker }) {
   const label = blocker.detail;
+  // DCS-09: supplemental FAIL/UNKNOWN must not deep-link into score tiles.
+  if (isSupplementalBlocker(blocker)) {
+    return (
+      <span>
+        {label}
+        <span className="ml-1 text-[11px] text-muted-foreground">
+          (pilot supplemental)
+        </span>
+      </span>
+    );
+  }
   if (blocker.check_id) {
     return (
       <Link
@@ -749,6 +760,11 @@ function OpportunityTrackerPage() {
             {selectedPilot ? (
               <div className="flex flex-wrap items-center gap-2">
                 <StatusChip status={selectedPilot.status} />
+                {selectedPilot.status === "ready_provisional" ? (
+                  <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[11px] font-medium text-warn">
+                    Provisional supplemental
+                  </span>
+                ) : null}
                 {selectedPilot.gap_suggested ? (
                   <span className="rounded bg-risk/15 px-1.5 py-0.5 text-[11px] font-medium text-risk">
                     Gap suggested
@@ -770,6 +786,39 @@ function OpportunityTrackerPage() {
                   ))}
                 </ul>
               </div>
+            ) : null}
+
+            {selectedPilot &&
+            supplementalBlockingEntries(selectedPilot).length > 0 ? (
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                  Pilot supplemental
+                </div>
+                <ul className="mt-1.5 space-y-1 text-[13px]">
+                  {supplementalBlockingEntries(selectedPilot).map((row) => (
+                    <li key={row.check_id}>
+                      <span className="tabular font-medium">{row.check_id}</span>
+                      <span className={`ml-2 font-medium ${checkResultClass(row.status)}`}>
+                        {row.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  Supplemental preflight gates — not shown on the Data Center
+                  score worklist.
+                </p>
+              </div>
+            ) : null}
+
+            {selectedPilot && isBuildableStatus(selectedPilot.status) ? (
+              <Link
+                to="/workflow"
+                search={{ uc: selectedPilot.use_case_id }}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground hover:opacity-90"
+              >
+                Open Workflow Studio <ArrowRight className="h-4 w-4" />
+              </Link>
             ) : null}
 
             {detailPending ? (
@@ -848,7 +897,9 @@ function OpportunityTrackerPage() {
                               className="border-b border-border/70 last:border-0"
                             >
                               <td className="px-2.5 py-2">
-                                {row.result !== "PASS" ? (
+                                {row.result !== "PASS" &&
+                                row.result !== "not_evaluated" &&
+                                !isSupplementalGate(row.check_id) ? (
                                   <Link
                                     to="/data-consistency"
                                     search={{ issue: row.check_id }}
@@ -857,7 +908,14 @@ function OpportunityTrackerPage() {
                                     {row.check_id}
                                   </Link>
                                 ) : (
-                                  row.check_id
+                                  <span>
+                                    {row.check_id}
+                                    {isSupplementalGate(row.check_id) ? (
+                                      <span className="ml-1 text-[10px] text-muted-foreground">
+                                        supplemental
+                                      </span>
+                                    ) : null}
+                                  </span>
                                 )}
                               </td>
                               <td
@@ -971,9 +1029,7 @@ function PlanQueueRow({
         >
           Open fix flow <ArrowRight className="h-3.5 w-3.5" />
         </Link>
-      ) : (
-        <span className="text-[12px] text-muted-foreground">No deep-link</span>
-      )}
+      ) : null}
     </li>
   );
 }
@@ -1031,6 +1087,11 @@ function PilotListRow({
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <StatusChip status={pilot.status} />
+            {pilot.status === "ready_provisional" ? (
+              <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[11px] font-medium text-warn">
+                Provisional
+              </span>
+            ) : null}
             {pilot.gap_suggested ? (
               <span className="rounded bg-risk/15 px-1.5 py-0.5 text-[11px] font-medium text-risk">
                 Gap suggested
@@ -1050,14 +1111,25 @@ function PilotListRow({
             </ul>
           ) : null}
         </div>
-        <button
-          type="button"
-          onClick={onOpen}
-          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-[12px] font-medium hover:bg-accent"
-        >
-          {pilot.cta?.label ?? "View blueprint"}{" "}
-          <ArrowRight className="h-3 w-3" />
-        </button>
+        {isBuildableStatus(pilot.status) ? (
+          <Link
+            to="/workflow"
+            search={{ uc: pilot.use_case_id }}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-[12px] font-medium hover:bg-accent"
+          >
+            {pilot.cta?.label ?? "Open Workflow Studio"}{" "}
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={onOpen}
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border bg-elevated px-2.5 py-1.5 text-[12px] font-medium hover:bg-accent"
+          >
+            {pilot.cta?.label ?? "View blueprint"}{" "}
+            <ArrowRight className="h-3 w-3" />
+          </button>
+        )}
       </div>
     </li>
   );

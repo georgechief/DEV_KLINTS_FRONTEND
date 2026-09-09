@@ -101,6 +101,7 @@ function Signup() {
           company_domain: companyWebsite.trim(),
         }),
       });
+      sessionStorage.setItem("verification_email", email.trim().toLowerCase());
       void navigate({ to: "/verify" });
     } catch (err) {
       const domainErr = getFieldError(err, "company_domain");

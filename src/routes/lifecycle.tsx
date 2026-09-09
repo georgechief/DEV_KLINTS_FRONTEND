@@ -26,7 +26,7 @@ export const Route = createFileRoute("/lifecycle")({
       {
         name: "description",
         content:
-          "Architecture assessment across the lifecycle — recommendations only, never auto-retire.",
+          "Rule-based architecture assessment across the lifecycle — recommendations only, never auto-retire.",
       },
     ],
   }),
@@ -167,7 +167,7 @@ function LifecyclePage() {
 
   if (isPending) {
     return (
-      <AppShell title="Lifecycle cockpit" subtitle="Architecture assessment">
+      <AppShell title="Lifecycle cockpit" subtitle="Rule-based architecture assessment">
         <div className="flex min-h-[40vh] items-center justify-center">
           <KlintsLoader label="Loading architecture…" />
         </div>
@@ -177,11 +177,11 @@ function LifecyclePage() {
 
   if (isError || !latest) {
     return (
-      <AppShell title="Lifecycle cockpit" subtitle="Architecture assessment">
+      <AppShell title="Lifecycle cockpit" subtitle="Rule-based architecture assessment">
         <PageTitle
           kicker="Architecture"
           title="Lifecycle cockpit"
-          description="Could not load architecture assessment."
+          description="Could not load rule-based architecture assessment."
         />
         <div className="rounded-xl border border-border bg-elevated p-6">
           <p className="text-sm text-muted-foreground">
@@ -208,12 +208,12 @@ function LifecyclePage() {
     : null;
 
   return (
-    <AppShell title="Lifecycle cockpit" subtitle="Architecture assessment">
+      <AppShell title="Lifecycle cockpit" subtitle="Rule-based architecture assessment">
       <div className="lc-page">
         <PageTitle
           kicker="Architecture · lifecycle cockpit"
           title="Lifecycle revenue cockpit"
-          description="What is already running in Manago — Klints recommends; it never auto-retires or edits live assets."
+          description="Rule-based assessment of what is already running in Manago — Klints recommends; it never auto-retires or edits live assets. Not an AI agent."
           actions={
             <div className="flex flex-wrap items-center gap-2">
               <StatusChip
