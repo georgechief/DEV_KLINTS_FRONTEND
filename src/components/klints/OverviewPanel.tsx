@@ -21,6 +21,7 @@ import {
   DCS_PERIOD_CAPTURED_TOOLTIP,
   DCS_WORKLIST_QUERY_KEY,
   displayHeadlineScore,
+  dcsScoreDisplayColor,
   formatDcsThresholdBadge,
   resolveDcsThresholdState,
   DCS_HISTORY_QUERY_KEY,
@@ -938,6 +939,10 @@ export function OverviewPanel({
   const circ = 2 * Math.PI * r;
   const arcScore = scoreReady && headline != null ? headline : 0;
   const arcOffset = circ * (1 - arcScore / 100);
+  const arcColor = dcsScoreDisplayColor(
+    scoreReady && headline != null ? Math.round(headline) : null,
+    { empty: "rgb(245 242 235 / 0.2)" },
+  );
 
   // Period deltas from history period_compare (not consecutive run-diff).
   const liveDimChart = useMemo(
@@ -2011,6 +2016,7 @@ export function OverviewPanel({
                   cy="58"
                   r={r}
                   fill="none"
+                  stroke={arcColor}
                   strokeWidth="6"
                   strokeLinecap="round"
                   strokeDasharray={circ}

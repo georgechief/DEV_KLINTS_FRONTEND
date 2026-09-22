@@ -151,6 +151,8 @@ export type UseCaseRecommendationsResponse = {
     blocked: number;
     gap_suggested: number;
     unavailable?: number;
+    /** True (default) = Handoff needs QA PASS; False = demo bypass from backend. */
+    handoff_qa_required?: boolean;
   };
   pilots: UseCasePilotRecommendation[];
 };
@@ -400,6 +402,16 @@ export function isStudioEligibleCheck(
   return pilotsGatedByCheck(pilots, checkId).length > 0;
 }
 
+/**
+ * Fix-page "Proceed to Workflow Studio" suppress list.
+ * PT-04 treating path is Approve writeback → re-run DCS → PASS (handoff gates),
+ * not Fix → Studio mid-writeback.
+ */
+export function suppressFixProceedToStudio(checkId: string | undefined | null): boolean {
+  const id = typeof checkId === "string" ? checkId.trim().toUpperCase() : "";
+  return id === "PT-04";
+}
+
 /** PRD-WF-02 §6.1 — Fix Proceed CTA visibility (pure, testable). */
 export type FixStudioEligibility = {
   showProceed: boolean;
@@ -424,6 +436,9 @@ export function resolveFixStudioEligibility(input: {
     return { showProceed: false, known: false };
   }
   if (input.recommendationsError || !input.recommendationsSuccess) {
+    return { showProceed: false, known: true };
+  }
+  if (suppressFixProceedToStudio(input.checkId)) {
     return { showProceed: false, known: true };
   }
   return {
@@ -562,10 +577,29 @@ export const FLOW_STEPPER_TOOLTIPS = {
   qaNoPackage: "Generate a build package in Workflow Studio first",
   /** PRD-QA-01 §8.7 — Handoff locked until latest package QA PASS. */
   handoffQaLocked: "Clear QA (≥80, all hard tests) first",
+  /** Demo: Handoff open while QA not PASS (REQUIRE_HANDOFF_QA_PASS=False). */
+  handoffQaDemoBypass: "Demo: Handoff unlocked while QA/PT-04 can stay FAIL",
   /** @deprecated Prefer handoffQaLocked (same copy). */
   handoffNoPackage: "Clear QA (≥80, all hard tests) first",
   dataCenterLocked: "Available after your Data Consistency Score is calculated",
 } as const;
+
+/** Backend demo flag — prefer QA payload, then recommendations summary; default enforce. */
+export function isHandoffQaRequired(
+  ...sources: Array<
+    | { handoff_qa_required?: boolean }
+    | UseCaseRecommendationsResponse["summary"]
+    | null
+    | undefined
+  >
+): boolean {
+  for (const source of sources) {
+    if (source && typeof source.handoff_qa_required === "boolean") {
+      return source.handoff_qa_required;
+    }
+  }
+  return true;
+}
 
 export type FlowStepperStageResolution = {
   enabled: boolean;
@@ -597,6 +631,8 @@ export function resolveFlowStepperStage(
     qaStatus?: "PASS" | "FAIL" | null;
     qaPending?: boolean;
     qaRunId?: string;
+    /** False = demo bypass REQUIRE_HANDOFF_QA_PASS (open Handoff without QA PASS). */
+    handoffQaRequired?: boolean;
   },
 ): FlowStepperStageResolution {
   const issue = ctx.issueId?.trim() || undefined;
@@ -711,7 +747,8 @@ export function resolveFlowStepperStage(
     }
     case "handoff": {
       // PRD-QA-01 §8.7 — enable only after latest QA PASS for that package.
-      // Issue is journey context only; package + PASS is the gate.
+      // Demo: handoffQaRequired=false unlocks when a QA run exists (PASS or FAIL).
+      const requireQa = ctx.handoffQaRequired !== false;
       if (!ctx.packageId) {
         return {
           enabled: false,
@@ -720,7 +757,24 @@ export function resolveFlowStepperStage(
           search: handoffSearch(),
         };
       }
-      if (ctx.qaPending || ctx.qaStatus !== "PASS") {
+      if (ctx.qaPending) {
+        return {
+          enabled: false,
+          tooltip: FLOW_STEPPER_TOOLTIPS.handoffQaLocked,
+          to: "/handoff",
+          search: handoffSearch(),
+        };
+      }
+      // null = never run / no result yet — still blocked (backend needs a QA row to stage).
+      if (ctx.qaStatus == null) {
+        return {
+          enabled: false,
+          tooltip: FLOW_STEPPER_TOOLTIPS.handoffQaLocked,
+          to: "/handoff",
+          search: handoffSearch(),
+        };
+      }
+      if (requireQa && ctx.qaStatus !== "PASS") {
         return {
           enabled: false,
           tooltip: FLOW_STEPPER_TOOLTIPS.handoffQaLocked,
@@ -730,6 +784,9 @@ export function resolveFlowStepperStage(
       }
       return {
         enabled: true,
+        tooltip: requireQa
+          ? undefined
+          : FLOW_STEPPER_TOOLTIPS.handoffQaDemoBypass,
         to: "/handoff",
         search: handoffSearch(),
       };

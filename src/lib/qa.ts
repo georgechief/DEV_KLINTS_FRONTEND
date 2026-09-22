@@ -60,6 +60,8 @@ export type QaResultResponse = {
   status: QaOverallStatus;
   evidence: QaEvidence[];
   created_at: string;
+  /** Demo gate: false = Handoff may open/stage while status is FAIL. */
+  handoff_qa_required?: boolean;
 };
 
 /** PRD-QA-01 §8.3 — display names for gate rows. */

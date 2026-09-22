@@ -11,6 +11,10 @@ export const WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS = [
   "CI-01",
   "CC-03",
   "WB-SHOP-01",
+  "LE-01",
+  "SP-07",
+  "LE-09",
+  "PT-04",
 ] as const;
 
 export const WRITEBACK_MAPPINGS_QUERY_KEY = ["writebacks", "mappings"] as const;
@@ -394,6 +398,9 @@ export function writebackPreviewToTable(
     helper = platforms
       ? `Write applied · updates sent to ${platforms}.`
       : "Write applied · audit recorded.";
+    if (String(result.check_id || "").toUpperCase() === "SP-07") {
+      helper = `${helper} Re-run DCS so SP-07 can PASS and unlock gated writebacks.`;
+    }
   } else if (result.blocked_reason) {
     helper = `${result.blocked_reason} Preview is read-only.`;
   }
@@ -401,6 +408,12 @@ export function writebackPreviewToTable(
     const disclosure =
       result.operator_disclosure?.trim() || WRITEBACK_IRREVERSIBLE_GENERIC_DETAIL;
     helper = `${helper} ${disclosure}`;
+  } else if (
+    phase === "preview" &&
+    String(result.check_id || "").toUpperCase() === "SP-07" &&
+    result.operator_disclosure?.trim()
+  ) {
+    helper = `${helper} ${result.operator_disclosure.trim()}`;
   }
 
   return {
@@ -1033,7 +1046,7 @@ export function writebackLimitedRollbackHonesty(
     return {
       title: "Limited rollback for event writes",
       detail:
-        "Manago event ingest (e.g. LE-01) is not bulk-undoable. Request approval only when the preview matches your intent.",
+        "Bulk event backfill (PURCHASE / RETURN / CANCELLATION) may not be fully reversible. Rollback is not supported as a full reverse — do not treat undo as complete.",
     };
   }
   return {
@@ -1067,6 +1080,11 @@ export function writebackApproveWriteConfirmDescription(
       preview?.operator_disclosure?.trim() ||
       mapping?.operator_disclosure?.trim() ||
       WRITEBACK_IRREVERSIBLE_GENERIC_DETAIL;
+    return `${disclosure} Proceed with Approve & write for ${target}?`;
+  }
+  const disclosure =
+    preview?.operator_disclosure?.trim() || mapping?.operator_disclosure?.trim();
+  if (disclosure) {
     return `${disclosure} Proceed with Approve & write for ${target}?`;
   }
   return `Apply writeback for ${target}? Updates will be sent to connected systems after approval.`;
@@ -1107,7 +1125,7 @@ export function writebackPossibleToTable(
     columns: [...WRITEBACK_POSSIBLE_COLUMNS],
     rows: tableRows,
     helper:
-      "Honest write surfaces from the possible/not sheet. Rollback = manual admin undo when supported — not automatic on error. Shopify metafield (namespace=klints) is documented but not execute yet; WB-SHOP-01 uses customer note. Event ingest (LE-01) has limited rollback.",
+      "Honest write surfaces from the possible/not sheet. Rollback = manual admin undo when supported — not automatic on error. Shopify metafield (namespace=klints) is documented but not execute yet; WB-SHOP-01 uses customer note. Event ingest (LE-01 / LE-09) has limited rollback.",
   };
 }
 
@@ -1639,4 +1657,20 @@ export function isWritebackExecuteSuccess(
   if (!result) return false;
   if (result.blocked_reason) return false;
   return (result.summary?.executed ?? 0) >= 1;
+}
+
+/** Toast after successful Approve execute (WB-12: PT-04 reminds re-run DCS). */
+export function writebackExecuteSuccessToastMessage(
+  result: WritebackExecuteResult,
+  platformLabel?: string | null,
+): string {
+  const executed = result.summary?.executed ?? 0;
+  const platform = platformLabel?.trim();
+  let message = `Writeback applied · ${result.check_id} · ${executed} update${
+    executed === 1 ? "" : "s"
+  }${platform ? ` · ${platform}` : ""}`;
+  if (normalizeWritebackCheckId(result.check_id) === "PT-04") {
+    message += " · re-run DCS to clear PT-04";
+  }
+  return message;
 }

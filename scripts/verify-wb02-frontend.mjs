@@ -44,7 +44,15 @@ function assertNotIncludes(src, rel, needle, label) {
 }
 
 const WRITEBACK_PREVIEW_BLOCKED_CHECK_IDS = ["LE-04"];
-const WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS = ["CI-01", "CC-03", "WB-SHOP-01"];
+const WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS = [
+  "CI-01",
+  "CC-03",
+  "WB-SHOP-01",
+  "LE-01",
+  "SP-07",
+  "LE-09",
+  "PT-04",
+];
 const EXECUTE_WRITE_STATES = new Set(["yes", "sandbox_only"]);
 
 function normalizeWritebackCheckId(checkId) {
@@ -264,9 +272,13 @@ const SHEET_ROWS = [
   { check_id: "CI-01", write_possible_today: "sandbox_only", rollback_possible_today: "yes" },
   { check_id: "CC-03", write_possible_today: "sandbox_only", rollback_possible_today: "yes" },
   { check_id: "WB-SHOP-01", write_possible_today: "sandbox_only", rollback_possible_today: "yes" },
+  { check_id: "SP-01", write_possible_today: "disabled", rollback_possible_today: "n/a" },
+  { check_id: "LE-01", write_possible_today: "yes", rollback_possible_today: "limited" },
+  { check_id: "SP-07", write_possible_today: "yes", rollback_possible_today: "yes" },
+  { check_id: "LE-09", write_possible_today: "yes", rollback_possible_today: "limited" },
+  { check_id: "PT-04", write_possible_today: "yes", rollback_possible_today: "yes" },
   { check_id: "LE-04", write_possible_today: "disabled", rollback_possible_today: "n/a" },
   { check_id: "CI-03", write_possible_today: "disabled", rollback_possible_today: "n/a" },
-  { check_id: "LE-01", write_possible_today: "disabled", rollback_possible_today: "no" },
   { check_id: "SHOPIFY-ORDER", write_possible_today: "no", rollback_possible_today: "n/a" },
 ];
 
@@ -274,16 +286,21 @@ const MAPPINGS = [
   { check_id: "CI-01", enabled: true },
   { check_id: "CC-03", enabled: true },
   { check_id: "WB-SHOP-01", enabled: true },
+  { check_id: "SP-01", enabled: false },
+  { check_id: "LE-01", enabled: true },
+  { check_id: "SP-07", enabled: true },
+  { check_id: "LE-09", enabled: true },
+  { check_id: "PT-04", enabled: true },
   { check_id: "LE-04", enabled: false },
 ];
 
 function testAllowlist() {
-  console.log("\n1. Excel/sheet allowlist (CI-01, CC-03, WB-SHOP-01 only)");
-  for (const id of ["CI-01", "CC-03", "WB-SHOP-01"]) {
+  console.log("\n1. Excel/sheet allowlist (CI-01, CC-03, WB-SHOP-01, LE-01, SP-07, LE-09, PT-04; SP-01 not MVP1 42)");
+  for (const id of ["CI-01", "CC-03", "WB-SHOP-01", "LE-01", "SP-07", "LE-09", "PT-04"]) {
     if (isWritebackApproveAllowlisted(id)) pass(`${id} allowlisted`);
     else fail(`${id} allowlisted`);
   }
-  for (const id of ["LE-04", "CI-03", "LE-01", "PT-04", "SHOPIFY-ORDER"]) {
+  for (const id of ["SP-01", "LE-04", "CI-03", "SHOPIFY-ORDER"]) {
     if (!isWritebackApproveAllowlisted(id)) pass(`${id} not allowlisted`);
     else fail(`${id} not allowlisted`);
   }
@@ -566,16 +583,65 @@ function testEligibility() {
   }
 
   if (
-    !isWritebackSheetExecuteAdvertised(SHEET_ROWS, "LE-01") &&
-    !isWritebackApproveExecutable({
-      ...base,
-      checkId: "LE-01",
-      preview: readyPreview({ check_id: "LE-01" }),
-    })
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "LE-01") &&
+    isWritebackApproveAllowlisted("LE-01") &&
+    !isWritebackSheetExecuteAdvertised(SHEET_ROWS, "SP-01") &&
+    !isWritebackApproveAllowlisted("SP-01")
   ) {
-    pass("LE-01 sheet disabled → not executable");
+    pass("WB-08 LE-01 executable; SP-01 not MVP1 42 / disabled");
   } else {
-    fail("LE-01 sheet disabled → not executable");
+    fail("WB-08 LE-01 executable; SP-01 not MVP1 42 / disabled");
+  }
+
+  if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "SP-07") &&
+    isWritebackApproveAllowlisted("SP-07")
+  ) {
+    pass("WB-09 SP-07 executable");
+  } else {
+    fail("WB-09 SP-07 executable");
+  }
+
+  if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "LE-09") &&
+    isWritebackApproveAllowlisted("LE-09")
+  ) {
+    pass("WB-10 LE-09 executable");
+  } else {
+    fail("WB-10 LE-09 executable");
+  }
+
+  if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "PT-04") &&
+    isWritebackApproveAllowlisted("PT-04")
+  ) {
+    pass("WB-11 PT-04 executable");
+  } else {
+    fail("WB-11 PT-04 executable");
+  }
+
+  {
+    const writebacks = readSrc("src/lib/writebacks.ts");
+    const fixPage = readSrc("src/routes/fix.tsx");
+    if (
+      writebacks.includes("writebackExecuteSuccessToastMessage") &&
+      writebacks.includes('=== "PT-04"') &&
+      writebacks.includes("re-run DCS to clear PT-04") &&
+      fixPage.includes("writebackExecuteSuccessToastMessage")
+    ) {
+      pass("WB-12 PT-04 success toast honesty");
+    } else {
+      fail("WB-12 PT-04 success toast honesty");
+    }
+  }
+
+  if (
+    !isWritebackSheetExecuteAdvertised(SHEET_ROWS, "CI-03") &&
+    !isWritebackApproveAllowlisted("CI-03")
+  ) {
+    pass("CI-03 still not executable");
+  } else {
+    fail("CI-03 still not executable");
   }
 
   if (

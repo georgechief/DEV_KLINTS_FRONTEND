@@ -80,7 +80,10 @@ import {
   BUILD_PACKAGE_QUERY_KEY,
   FLOW_STEPPER_TOOLTIPS,
   getBuildPackage,
+  getUseCaseRecommendations,
+  isHandoffQaRequired,
   parseHandoffSearch,
+  UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
   workflowStudioLink,
   type BuildPackageResponse,
@@ -94,7 +97,7 @@ export const Route = createFileRoute("/handoff")({
       {
         name: "description",
         content:
-          "Staged handoff package after QA PASS. Human activation in Manago — no MCP auto-send.",
+          "Staged handoff package for human activation in Manago — no MCP auto-send.",
       },
     ],
   }),
@@ -177,6 +180,12 @@ function HandoffPage() {
     retry: false,
   });
 
+  const { data: recommendations } = useQuery({
+    queryKey: UC_RECOMMENDATIONS_QUERY_KEY,
+    queryFn: getUseCaseRecommendations,
+    staleTime: UC_STALE_MS,
+  });
+
   /** Build package for human_guide / title / richer route (PRD §6.3). */
   const packageQuery = useQuery({
     queryKey: [...BUILD_PACKAGE_QUERY_KEY, packageId],
@@ -215,13 +224,20 @@ function HandoffPage() {
   const qaResult: QaResultResponse | undefined = qaQuery.isSuccess
     ? qaQuery.data
     : undefined;
+  const handoffQaRequired = isHandoffQaRequired(
+    qaResult,
+    recommendations?.summary,
+  );
   const qaMatchesPackage = qaResultMatchesPackage(qaResult, packageId ?? "");
   const qaPass = isQaPass(qaResult);
   const qaGateResolved =
     Boolean(packageId) &&
     (qaQuery.isSuccess || qaNeverRun || qaRunNotFound);
+  /** Demo: REQUIRE_HANDOFF_QA_PASS=False opens gate with any QA result for the package. */
   const qaGateOpen =
-    qaQuery.isSuccess && qaMatchesPackage && qaPass;
+    qaQuery.isSuccess &&
+    qaMatchesPackage &&
+    (qaPass || !handoffQaRequired);
   const qaPackageMismatch =
     qaQuery.isSuccess && Boolean(qaResult) && !qaMatchesPackage;
   const qaGateBlocked =
@@ -229,7 +245,7 @@ function HandoffPage() {
     (qaNeverRun ||
       qaRunNotFound ||
       qaPackageMismatch ||
-      (qaQuery.isSuccess && !qaPass));
+      (qaQuery.isSuccess && !qaPass && handoffQaRequired));
   const qaQueryFailed =
     Boolean(packageId) &&
     qaQuery.isError &&
@@ -438,6 +454,14 @@ function HandoffPage() {
           }
         />
 
+        {!handoffQaRequired && Boolean(packageId) && !qaPass ? (
+          <div className="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] leading-relaxed text-[rgb(22_22_26/0.8)]">
+            Demo bypass: Handoff is open while QA is not PASS (PT-04 / Fix
+            story can stay FAIL). Production keeps{" "}
+            <code className="text-[11px]">REQUIRE_HANDOFF_QA_PASS=True</code>.
+          </div>
+        ) : null}
+
         {!packageId && !handoffIdFromSearch ? (
           <div className="flow-empty">
             <ListChecks className="h-10 w-10 text-fog" strokeWidth={1.5} />
@@ -517,9 +541,13 @@ function HandoffPage() {
             </h2>
             <p>
               {checkingQa
-                ? "Handoff unlocks after QA PASS (≥80, all hard tests)."
+                ? handoffQaRequired
+                  ? "Handoff unlocks after QA PASS (≥80, all hard tests)."
+                  : "Demo: checking QA — Handoff can open without PASS."
                 : preparing || stagePendingForPackage
-                  ? "QA passed — creating the staged package for this build."
+                  ? qaPass
+                    ? "QA passed — creating the staged package for this build."
+                    : "Demo: staging handoff while QA is not PASS…"
                   : "Fetching the live package for this build."}
             </p>
           </div>

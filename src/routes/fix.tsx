@@ -41,6 +41,7 @@ import {
   isWritebackRequestApprovalExecutable,
   isWritebackApprovalRequestRole,
   isWritebackExecuteSuccess,
+  writebackExecuteSuccessToastMessage,
   isWritebackPreviewAvailable,
   isWritebackSheetRollbackSupported,
   pendingApprovalFromWritebackStatus,
@@ -691,11 +692,11 @@ function FixPage() {
       setWritten(true);
       setRolledBack(false);
       setExecuteResult(result);
-      const platform = platformLabelFromExecute(result);
       toast.success(
-        `Writeback applied · ${result.check_id} · ${result.summary.executed} update${
-          result.summary.executed === 1 ? "" : "s"
-        }${platform ? ` · ${platform}` : ""}`,
+        writebackExecuteSuccessToastMessage(
+          result,
+          platformLabelFromExecute(result),
+        ),
       );
       invalidateWritebackQueries();
     },

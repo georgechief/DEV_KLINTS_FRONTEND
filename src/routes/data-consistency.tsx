@@ -24,6 +24,7 @@ import {
 import { ORCH_PLAN_QUERY_KEY, ORCH_STALE_MS, fixTasksFromPlan, getOrchestrationPlan, sortIssuesByPlanOrder } from "@/lib/orchestration";
 import {
   DCS_BUILD_READY_THRESHOLD,
+  dcsScoreDisplayColor,
   DCS_HISTORY_QUERY_KEY,
   DCS_WORKLIST_QUERY_KEY,
   computeDimensionDeltas,
@@ -664,14 +665,7 @@ function DataConsistencyPage() {
     score != null ? Math.max(0, threshold - score) : threshold;
   const isReady = score != null && score >= threshold;
   const arcOffset = score != null ? CIRC * (1 - score / 100) : CIRC;
-  const arcColor =
-    score == null
-      ? "#9C9A92"
-      : isReady
-        ? "#2E8857"
-        : score >= 60
-          ? "#D97706"
-          : "#B91C1C";
+  const arcColor = dcsScoreDisplayColor(score);
 
   const { data: scoreHistoryData } = useQuery({
     queryKey: [

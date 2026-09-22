@@ -32,6 +32,40 @@ export function withIssueSearch(issueId: string | undefined | null): FixFlowSear
   return issueId ? { issue: issueId } : {};
 }
 
+/**
+ * Search params for sidebar links across Diagnose → Handoff.
+ * Stepper already preserves context; bare sidebar `to="/fix"` must not drop `?issue=`.
+ */
+export function sidebarFixFlowSearch(
+  to: string,
+  ctx: {
+    issue?: string | null;
+    uc?: string | null;
+    package_id?: string | null;
+    qa_run_id?: string | null;
+  },
+): Record<string, string> | undefined {
+  const issue = ctx.issue?.trim() || undefined;
+  const uc = ctx.uc?.trim() || undefined;
+  const packageId = ctx.package_id?.trim() || undefined;
+  const qaRunId = ctx.qa_run_id?.trim() || undefined;
+
+  if (to === "/fix" || to === "/data-consistency") {
+    return issue ? { issue } : undefined;
+  }
+
+  if (to === "/workflow" || to === "/qa" || to === "/handoff") {
+    const search: Record<string, string> = {};
+    if (issue) search.issue = issue;
+    if (uc) search.uc = uc;
+    if (packageId) search.package_id = packageId;
+    if (to === "/handoff" && qaRunId) search.qa_run_id = qaRunId;
+    return Object.keys(search).length > 0 ? search : undefined;
+  }
+
+  return undefined;
+}
+
 export function getCheckIdFromSearch(search: FixFlowSearch): string | undefined {
   return resolveCheckIdFromSearch(search.check, search.issue);
 }

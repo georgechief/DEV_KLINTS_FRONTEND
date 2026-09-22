@@ -9,7 +9,10 @@ import { getApiErrorMessage } from "@/lib/connectors";
 import {
   BUILD_PACKAGE_QUERY_KEY,
   getBuildPackage,
+  getUseCaseRecommendations,
+  isHandoffQaRequired,
   parseQaSearch,
+  UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
   workflowStudioLink,
   type BuildPackageResponse,
@@ -111,6 +114,12 @@ function QaPage() {
     staleTime: UC_STALE_MS,
   });
 
+  const { data: recommendations } = useQuery({
+    queryKey: UC_RECOMMENDATIONS_QUERY_KEY,
+    queryFn: getUseCaseRecommendations,
+    staleTime: UC_STALE_MS,
+  });
+
   const qaQuery = useQuery({
     queryKey: packageQaQueryKey(packageId ?? ""),
     queryFn: () => getLatestPackageQa(packageId!),
@@ -187,7 +196,16 @@ function QaPage() {
     mutationForPackage ??
     (qaQuery.isSuccess ? qaQuery.data : undefined);
 
-  const canHandoff = isQaPass(qaResult);
+  const handoffQaRequired = isHandoffQaRequired(
+    qaResult,
+    recommendations?.summary,
+  );
+  const qaPassed = isQaPass(qaResult);
+  // Demo bypass still needs a QA row (backend stages against qa_result).
+  const canHandoff =
+    Boolean(packageId) &&
+    Boolean(qaResult) &&
+    (qaPassed || !handoffQaRequired);
   const handoff = handoffFromQa({
     uc: uc ?? qaResult?.use_case_id ?? packageQuery.data?.use_case_id,
     package_id: packageId,
@@ -330,7 +348,7 @@ function QaPage() {
                     <>
                       <div
                         className={`font-mono text-[1.65rem] font-semibold leading-none tracking-tight ${
-                          canHandoff ? "text-revenue" : "text-risk"
+                          qaPassed ? "text-revenue" : "text-risk"
                         }`}
                       >
                         {Math.round(qaResult.score)}
@@ -340,14 +358,28 @@ function QaPage() {
                         </span>
                       </div>
                       <StatusBadge
-                        status={canHandoff ? "Cleared" : "Blocked"}
+                        status={
+                          qaPassed
+                            ? "Cleared"
+                            : canHandoff
+                              ? "Demo open"
+                              : "Blocked"
+                        }
                       />
                       <div
                         className={`max-w-[14rem] text-[11px] leading-snug ${
-                          canHandoff ? "text-revenue" : "text-risk"
+                          qaPassed
+                            ? "text-revenue"
+                            : canHandoff
+                              ? "text-[rgb(22_22_26/0.65)]"
+                              : "text-risk"
                         }`}
                       >
-                        {qaScoreChipSummary(qaResult)}
+                        {qaPassed
+                          ? qaScoreChipSummary(qaResult)
+                          : canHandoff
+                            ? "QA not PASS — Handoff open for demo walkthrough"
+                            : qaScoreChipSummary(qaResult)}
                       </div>
                       <div className="font-mono text-[11px] text-fog">
                         gate ≥ {Math.round(qaResult.minimum_score)}
@@ -435,11 +467,13 @@ function QaPage() {
 
               <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
                 <p className="text-[12.5px] text-[rgb(22_22_26/0.65)]">
-                  {canHandoff
+                  {qaPassed
                     ? "All hard tests cleared and score meets the gate — ready for handoff."
-                    : qaResult
-                      ? "Fix failing hard tests or regenerate the package, then re-run QA."
-                      : "Waiting for QA results…"}
+                    : canHandoff
+                      ? "Demo: Handoff open while QA is not PASS (Fix story). Production requires QA PASS."
+                      : qaResult
+                        ? "Fix failing hard tests or regenerate the package, then re-run QA."
+                        : "Waiting for QA results…"}
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <Link
@@ -485,8 +519,10 @@ function QaPage() {
                 </div>
                 <p className="mt-1 max-w-xl text-[12px] leading-relaxed text-[rgb(22_22_26/0.65)]">
                   Handoff opens the staged package for human activation in Manago.
-                  Live MCP/A2A send is a later milestone — this step only unlocks
-                  after QA PASS.
+                  Live MCP/A2A send is a later milestone
+                  {handoffQaRequired
+                    ? " — this step only unlocks after QA PASS."
+                    : ". Demo: open while QA is not PASS (Fix story)."}
                 </p>
               </div>
               {canHandoff ? (

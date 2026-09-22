@@ -40,6 +40,7 @@ import {
   DCS_BUILD_READY_THRESHOLD,
   DCS_WORKLIST_QUERY_KEY,
   displayHeadlineScore,
+  dcsScoreDisplayColor,
   formatDcsScore,
   getDcsStatus,
   getDcsWorklist,
@@ -72,10 +73,12 @@ import {
   needsFixFlowWorklist,
   parseFixFlowSearch,
   resolveFixFlowIssueTitle,
+  sidebarFixFlowSearch,
 } from "@/lib/fix-flow";
 import {
   deriveJourneyStage,
   getUseCaseRecommendations,
+  isHandoffQaRequired,
   parseWorkflowSearch,
   UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
@@ -190,9 +193,7 @@ function DcsScoreChip({
   const scoreReady = status ? isDcsScoreReady(status) : false;
   const headline = status ? displayHeadlineScore(status) : null;
   const score = scoreReady && headline != null ? Math.round(headline) : null;
-  const belowThreshold = score != null && score < DCS_BUILD_READY_THRESHOLD;
-  const arcColor =
-    score == null ? "#E8E4D9" : belowThreshold ? "#B91C1C" : score < 90 ? "#D97706" : "#2E8857";
+  const arcColor = dcsScoreDisplayColor(score, { empty: "#E8E4D9" });
   const offset =
     score == null ? SCORE_CHIP_CIRC : SCORE_CHIP_CIRC * (1 - Math.min(100, Math.max(0, score)) / 100);
   const label =
@@ -346,7 +347,10 @@ export function AppShell({
   const resolvedIssueTitle =
     issueTitle ??
     resolveFixFlowIssueTitle(fixFlowSearch, fixFlowWorklist?.issues) ??
-    null;
+    // Keep Working-on label honest while worklist title is still loading.
+    (issueIdFromSearch && !isFixtureIssueId(issueIdFromSearch)
+      ? issueIdFromSearch
+      : null);
 
   const liveStepperIssue =
     issueIdFromSearch && !isFixtureIssueId(issueIdFromSearch)
@@ -368,7 +372,8 @@ export function AppShell({
     queryKey: UC_RECOMMENDATIONS_QUERY_KEY,
     queryFn: getUseCaseRecommendations,
     staleTime: UC_STALE_MS,
-    enabled: dcsQueryEnabled && Boolean(flowStep) && Boolean(liveStepperIssue),
+    // Include QA/Handoff so demo flag handoff_qa_required is available without an issue id.
+    enabled: dcsQueryEnabled && Boolean(flowStep),
   });
 
   const stepperPackageId = workflowSearch.package_id;
@@ -420,6 +425,10 @@ export function AppShell({
           qaStatus: stepperQaStatus ?? null,
           qaPending: stepperQaAwaiting,
           qaRunId: qaMatchesPackage ? stepperQa?.qa_run_id : undefined,
+          handoffQaRequired: isHandoffQaRequired(
+            qaMatchesPackage ? stepperQa : undefined,
+            stepperRecommendations?.summary,
+          ),
         }
       : flowStep
         ? {
@@ -432,6 +441,10 @@ export function AppShell({
             qaStatus: stepperQaStatus ?? null,
             qaPending: stepperQaAwaiting,
             qaRunId: qaMatchesPackage ? stepperQa?.qa_run_id : undefined,
+            handoffQaRequired: isHandoffQaRequired(
+              qaMatchesPackage ? stepperQa : undefined,
+              stepperRecommendations?.summary,
+            ),
           }
         : undefined;
 
@@ -605,7 +618,17 @@ export function AppShell({
     }
 
     return (
-      <Link key={item.to} to={item.to} className={baseClass}>
+      <Link
+        key={item.to}
+        to={item.to}
+        search={sidebarFixFlowSearch(item.to, {
+          issue: issueIdFromSearch ?? workflowSearch.issue,
+          uc: workflowSearch.uc,
+          package_id: workflowSearch.package_id,
+          qa_run_id: qaMatchesPackage ? stepperQa?.qa_run_id : undefined,
+        })}
+        className={baseClass}
+      >
         {inner}
       </Link>
     );
@@ -690,6 +713,9 @@ export function AppShell({
   const dcsNavAllowed = isNavRouteAllowed(dcsStatus, "/data-consistency");
   const sidebarScore =
     dcsStatus && isDcsScoreReady(dcsStatus) ? displayHeadlineScore(dcsStatus) : null;
+  const sidebarScoreRounded =
+    sidebarScore != null ? Math.round(sidebarScore) : null;
+  const sidebarScoreColor = dcsScoreDisplayColor(sidebarScoreRounded);
   const ptsToBuild =
     sidebarScore != null
       ? formatDisplayCount(Math.max(0, DCS_BUILD_READY_THRESHOLD - sidebarScore))
@@ -735,7 +761,10 @@ export function AppShell({
               Data Consistency · 7 dims
             </div>
             <div className="mt-1 flex items-baseline gap-1.5">
-              <span className="font-display text-[1.35rem] leading-none tracking-tight text-sidebar-primary tabular-nums">
+              <span
+                className="font-display text-[1.35rem] leading-none tracking-tight tabular-nums"
+                style={{ color: sidebarScoreColor }}
+              >
                 {sidebarScore != null ? formatDcsScore(sidebarScore) : "—"}
               </span>
               <span className="font-mono text-[10.5px] text-sidebar-foreground/40">/ 100</span>
@@ -754,7 +783,10 @@ export function AppShell({
               Data Consistency · 7 dims
             </div>
             <div className="mt-1 flex items-baseline gap-1.5">
-              <span className="font-display text-[1.35rem] leading-none tracking-tight text-sidebar-primary tabular-nums">
+              <span
+                className="font-display text-[1.35rem] leading-none tracking-tight tabular-nums"
+                style={{ color: dcsScoreDisplayColor(null) }}
+              >
                 —
               </span>
               <span className="font-mono text-[10.5px] text-sidebar-foreground/40">/ 100</span>
