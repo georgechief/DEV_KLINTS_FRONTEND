@@ -4,7 +4,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { formatDcsRevenue, DCS_BUILD_READY_THRESHOLD } from "@/lib/dcs";
+import { formatDcsRevenue, DCS_BUILD_READY_THRESHOLD, dcsScoreDisplayColor } from "@/lib/dcs";
 import { formatCurrency, issues } from "@/lib/klints-data";
 import { LEGACY_WORKFLOW_TO_UC, workflowStudioLink } from "@/lib/use-cases";
 import { roundDisplayScore, formatDisplayCount } from "@/lib/presentation";
@@ -46,9 +46,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 function dimFill(score: number) {
-  if (score < 60) return "#F87171";
-  if (score < 70) return "#D97706";
-  return "#2E8857";
+  return dcsScoreDisplayColor(score);
 }
 
 function shortDimName(name: string) {

@@ -38,10 +38,8 @@ export function NbaBlurbBox({
     queryKey: aiNbaBlurbQueryKey(checkId, dcsRunId, planRank),
     queryFn: () => getOrCreateNbaBlurb(checkId, dcsRunId, planRank),
     enabled: enabled && Boolean(checkId.trim()) && gateOpen,
-    retry: (failureCount, error) =>
-      failureCount < 1 &&
-      Boolean(error && typeof error === "object" && (error as { status?: number }).status === 503),
-    retryDelay: 2000,
+    // Do not retry 503 — Mistral 429 maps to 503 and retries burn the shared quota.
+    retry: false,
     staleTime: 5 * 60 * 1000,
   });
 

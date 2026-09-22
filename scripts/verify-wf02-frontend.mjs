@@ -72,6 +72,12 @@ function isStudioEligibleCheck(pilots, checkId) {
   return pilotsGatedByCheck(pilots, checkId).length > 0;
 }
 
+/** PT-04 Fix path is writeback → re-score DCS, not Proceed to Studio. */
+function suppressFixProceedToStudio(checkId) {
+  const id = typeof checkId === "string" ? checkId.trim().toUpperCase() : "";
+  return id === "PT-04";
+}
+
 function resolveFixStudioEligibility(input) {
   if (input.isFixture) {
     return { showProceed: true, known: true };
@@ -83,6 +89,9 @@ function resolveFixStudioEligibility(input) {
     return { showProceed: false, known: false };
   }
   if (input.recommendationsError || !input.recommendationsSuccess) {
+    return { showProceed: false, known: true };
+  }
+  if (suppressFixProceedToStudio(input.checkId)) {
     return { showProceed: false, known: true };
   }
   return {
@@ -437,6 +446,7 @@ function testStep1Exports() {
   console.log("\n1. Step 1 — exports (PRD-WF-02 §10)");
   const src = readSrc("src/lib/use-cases.ts");
   assertIncludes(src, "use-cases.ts", "isStudioEligibleCheck", "isStudioEligibleCheck exported");
+  assertIncludes(src, "use-cases.ts", "suppressFixProceedToStudio", "PT-04 Fix Proceed suppress helper");
   assertIncludes(src, "use-cases.ts", "pilotsGatedByCheck", "pilotsGatedByCheck retained");
   assertIncludes(src, "use-cases.ts", "pickPrimaryPilotForCheck", "pickPrimaryPilotForCheck retained");
   assertIncludes(src, "use-cases.ts", "workflowStudioFromFix", "workflowStudioFromFix retained");
@@ -623,6 +633,23 @@ function testStep2FixCtas() {
     recommendationsError: false,
   });
   assert(cc03.showProceed && cc03.known, "CC-03 → Proceed after load");
+
+  const pt04 = resolveFixStudioEligibility({
+    isFixture: false,
+    checkId: "PT-04",
+    pilots: PACK_ROUTING_FIXTURE,
+    recommendationsPending: false,
+    recommendationsSuccess: true,
+    recommendationsError: false,
+  });
+  assert(
+    !pt04.showProceed && pt04.known,
+    "PT-04 → no Proceed (writeback → re-score DCS; still gates pilots elsewhere)",
+  );
+  assert(
+    isStudioEligibleCheck(PACK_ROUTING_FIXTURE, "PT-04"),
+    "PT-04 still studio-eligible for Opportunities / stepper",
+  );
 
   const recsError = resolveFixStudioEligibility({
     isFixture: false,

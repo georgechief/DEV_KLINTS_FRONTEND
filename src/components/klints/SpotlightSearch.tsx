@@ -11,6 +11,9 @@ import {
   ShieldCheck,
   User,
   Workflow,
+  Wrench,
+  Send,
+  Shield,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
@@ -27,6 +30,12 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { clearAuth } from "@/lib/auth";
 import { isNavRouteAllowed, type DcsAppStatus } from "@/lib/dcs";
 import {
+  getFixFlowIssueIdFromSearch,
+  parseFixFlowSearch,
+  sidebarFixFlowSearch,
+} from "@/lib/fix-flow";
+import { parseWorkflowSearch } from "@/lib/use-cases";
+import {
   clearOverviewSearch,
   filterOverviewHits,
   getOverviewSearchSnapshot,
@@ -42,11 +51,12 @@ import { type SearchHit, type SearchHitType, searchGlobal } from "@/lib/search";
 const pages = [
   { to: "/dashboard", label: "Overview", hint: "Governance overview", icon: LayoutDashboard },
   { to: "/data-consistency", label: "Data Consistency Score", hint: "DCS & integrity worklist", icon: ShieldCheck },
+  { to: "/fix", label: "Fix", hint: "Approve writebacks", icon: Wrench },
+  { to: "/workflow", label: "Workflow Studio", hint: "Package blueprints", icon: Workflow },
+  { to: "/qa", label: "QA validation", hint: "Package QA gates", icon: Shield },
+  { to: "/handoff", label: "Handoff", hint: "Staged package · human activation", icon: Send },
   { to: "/lifecycle", label: "Lifecycle cockpit", hint: "Rule-based architecture assessment", icon: Layers },
   { to: "/opportunities", label: "Opportunity tracker", hint: "Blocked · Opportunity · Tracked", icon: ListChecks },
-  { to: "/workflow", label: "Workflow Studio", hint: "Package blueprints", icon: Workflow },
-  { to: "/qa", label: "QA validation", hint: "Package QA gates", icon: ShieldCheck },
-  { to: "/handoff", label: "Handoff", hint: "Staged package · human activation", icon: Workflow },
   { to: "/integrations", label: "Connected stack", hint: "Manago.ai · Shopify", icon: Plug },
   { to: "/activity", label: "Activity", hint: "Governance timeline", icon: Activity },
   { to: "/settings", label: "Settings", hint: "Account & workspace", icon: Settings },
@@ -158,6 +168,22 @@ export function SpotlightSearch({
 }) {
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const locationSearch = useRouterState({
+    select: (s) => s.location.search as Record<string, unknown>,
+  });
+  const flowSearch = useMemo(() => {
+    const fix = parseFixFlowSearch(locationSearch);
+    const wf = parseWorkflowSearch(locationSearch);
+    return {
+      issue: getFixFlowIssueIdFromSearch(fix) ?? wf.issue,
+      uc: wf.uc,
+      package_id: wf.package_id,
+      qa_run_id:
+        typeof locationSearch.qa_run_id === "string"
+          ? locationSearch.qa_run_id
+          : undefined,
+    };
+  }, [locationSearch]);
   const onOverview = pathname === "/dashboard";
   const overviewSnap = useSyncExternalStore(
     subscribeOverviewSearch,
@@ -400,7 +426,9 @@ export function SpotlightSearch({
                   <CommandItem
                     key={p.to}
                     value={`nav-${p.to}`}
-                    onSelect={() => go(p.to)}
+                    onSelect={() =>
+                      go(p.to, undefined, sidebarFixFlowSearch(p.to, flowSearch))
+                    }
                   >
                     <Icon />
                     <div className="flex min-w-0 flex-1 flex-col">

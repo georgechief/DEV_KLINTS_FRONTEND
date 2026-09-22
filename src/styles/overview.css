@@ -669,10 +669,6 @@
   stroke: rgb(245 242 235 / 0.1);
 }
 
-.overview-panel .ov-score-arc-progress {
-  stroke: var(--ov-spark);
-}
-
 .overview-panel .ov-score-arc-num {
   position: absolute;
   inset: 0;

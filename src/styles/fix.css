@@ -344,6 +344,12 @@
   gap: 10px;
   margin-bottom: 10px;
 }
+.fix-page .fix-ai-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
 .fix-page .fix-ai-kicker {
   display: inline-flex;
   align-items: center;
@@ -357,6 +363,30 @@
 .fix-page .fix-ai-cached {
   font-size: 11px;
   color: var(--fix-fog);
+}
+.fix-page .fix-ai-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: var(--fix-hair);
+  border-radius: 8px;
+  background: #fff;
+  padding: 5px 9px;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--fix-ink);
+  cursor: pointer;
+}
+.fix-page .fix-ai-refresh:hover:not(:disabled) {
+  background: var(--fix-sand, #f6f4ef);
+}
+.fix-page .fix-ai-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.fix-page .fix-ai-body.is-refreshing {
+  opacity: 0.72;
+  transition: opacity 0.15s ease;
 }
 .fix-page .fix-ai-headline {
   font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;

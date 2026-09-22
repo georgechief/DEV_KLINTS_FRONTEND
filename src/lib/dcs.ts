@@ -15,6 +15,9 @@ export const DCS_HISTORY_QUERY_KEY = ["dcs", "history"] as const;
 /** Product threshold for workflow build readiness (shared across overview, sidebar, Data Center). */
 export const DCS_BUILD_READY_THRESHOLD = 70;
 
+/** Score band below build-ready that still shows warn (amber), not critical red. */
+export const DCS_SCORE_WARN_FLOOR = 60;
+
 /** PRD DCS-10: period captured widget — not banked revenue. */
 export const DCS_PERIOD_CAPTURED_TOOLTIP =
   "Open at-stake risk reduced between the oldest and newest scored run in the selected period. This is not banked or captured revenue.";
@@ -22,6 +25,28 @@ export const DCS_PERIOD_CAPTURED_TOOLTIP =
 export const DCS_PERIOD_CAPTURED_EYEBROW = "Period impact";
 
 export type DcsThresholdState = "below" | "at" | "above";
+
+/**
+ * Headline score colour — same bands as Data Center ring:
+ * ≥70 green · ≥60 amber · else red · null = muted.
+ */
+export function dcsScoreDisplayColor(
+  score: number | null | undefined,
+  options?: {
+    threshold?: number;
+    warnFloor?: number;
+    empty?: string;
+  },
+): string {
+  const threshold = options?.threshold ?? DCS_BUILD_READY_THRESHOLD;
+  const warnFloor = options?.warnFloor ?? DCS_SCORE_WARN_FLOOR;
+  const empty = options?.empty ?? "#9C9A92";
+  if (score == null || !Number.isFinite(score)) return empty;
+  const rounded = Math.round(score);
+  if (rounded >= threshold) return "#2E8857";
+  if (rounded >= warnFloor) return "#D97706";
+  return "#B91C1C";
+}
 
 export function resolveDcsThresholdState(
   score: number | null | undefined,

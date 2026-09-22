@@ -25,6 +25,8 @@ export type FixSuggestionResponse = {
   check_id: string;
   fingerprint: string;
   cached: boolean;
+  /** True when payload is a legacy row without content_hash (hint Refresh). */
+  stale?: boolean;
   model: string;
   prompt_version: string;
   payload: FixSuggestionPayload;
@@ -46,12 +48,20 @@ export function aiFixSuggestionQueryKey(
 export async function getOrCreateFixSuggestion(
   checkId: string,
   dcsRunId?: number | null,
+  options?: { forceRefresh?: boolean },
 ): Promise<FixSuggestionResponse> {
-  const body: { check_id: string; dcs_run_id?: number } = {
+  const body: {
+    check_id: string;
+    dcs_run_id?: number;
+    force_refresh?: boolean;
+  } = {
     check_id: checkId.trim().toUpperCase(),
   };
   if (typeof dcsRunId === "number" && Number.isFinite(dcsRunId)) {
     body.dcs_run_id = dcsRunId;
+  }
+  if (options?.forceRefresh) {
+    body.force_refresh = true;
   }
   return apiRequest("/api/v1/ai/suggestions/fix/", {
     method: "POST",
@@ -213,6 +223,7 @@ export function aiSuggestionErrorMessage(error: unknown): string {
       rec.code === "gate_denied" ||
       rec.code === "json_retry_exhausted" ||
       rec.code === "provider_not_configured" ||
+      rec.code === "rate_limited" ||
       rec.code === "ai_unavailable"
     ) {
       return AI_FIX_SUGGESTION_UNAVAILABLE;

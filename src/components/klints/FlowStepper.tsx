@@ -83,9 +83,11 @@ export function FlowStepper({
           >
             {issueTitle ??
               fixtureIssue?.title ??
-              (journey?.ucFromSearch
-                ? `${journey.ucFromSearch} · package journey`
-                : "No issue selected")}
+              (issueId
+                ? issueId
+                : journey?.ucFromSearch
+                  ? `${journey.ucFromSearch} · package journey`
+                  : "No issue selected")}
           </div>
         </div>
         {dataCenterAllowed ? (
