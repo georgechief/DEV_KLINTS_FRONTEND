@@ -44,15 +44,13 @@ function assertNotIncludes(src, rel, needle, label) {
 }
 
 const WRITEBACK_PREVIEW_BLOCKED_CHECK_IDS = ["LE-04"];
-const WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS = [
-  "CI-01",
-  "CC-03",
-  "WB-SHOP-01",
-  "LE-01",
-  "SP-07",
-  "LE-09",
-  "PT-04",
-];
+/** Parsed from src/lib/writebacks.ts SoT (PRD-WB-21 — do not duplicate Tier A by hand). */
+function loadApproveExecutableAllowlist() {
+  const text = readSrc("src/lib/writebacks.ts");
+  const block = text.split("WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS")[1].split("]")[0];
+  return [...block.matchAll(/"([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*)"/g)].map((m) => m[1]);
+}
+const WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS = loadApproveExecutableAllowlist();
 const EXECUTE_WRITE_STATES = new Set(["yes", "sandbox_only"]);
 
 function normalizeWritebackCheckId(checkId) {
@@ -157,7 +155,7 @@ function resolveWritebackPreviewExecutionBlockReason(input) {
   if (!isWritebackDiffHashValid(preview.diff_hash)) return "invalid_diff_hash";
   if (
     input.writebackExecuteEnabled !== true &&
-    !preview.execute_eligible?.sandbox &&
+    !(preview.execute_eligible?.company === true || preview.execute_eligible?.sandbox) &&
     !preview.execute_eligible?.production
   ) {
     return "company_execute_disabled";
@@ -262,23 +260,27 @@ function readyPreview(overrides = {}) {
     job_id: "11111111-1111-1111-1111-111111111111",
     diff_hash: VALID_HASH,
     summary: { ready: 1, skipped: 0, errors: 0, executed: 0 },
-    execute_eligible: { sandbox: true, production: false },
+    execute_eligible: { company: true, sandbox: true, production: false },
     blocked_reason: null,
     ...overrides,
   };
 }
 
 const SHEET_ROWS = [
-  { check_id: "CI-01", write_possible_today: "sandbox_only", rollback_possible_today: "yes" },
-  { check_id: "CC-03", write_possible_today: "sandbox_only", rollback_possible_today: "yes" },
-  { check_id: "WB-SHOP-01", write_possible_today: "sandbox_only", rollback_possible_today: "yes" },
+  { check_id: "CI-01", write_possible_today: "yes", rollback_possible_today: "yes" },
+  { check_id: "CC-03", write_possible_today: "yes", rollback_possible_today: "yes" },
+  { check_id: "WB-SHOP-01", write_possible_today: "yes", rollback_possible_today: "yes" },
   { check_id: "SP-01", write_possible_today: "disabled", rollback_possible_today: "n/a" },
   { check_id: "LE-01", write_possible_today: "yes", rollback_possible_today: "limited" },
+  { check_id: "LE-05", write_possible_today: "yes", rollback_possible_today: "limited" },
+  { check_id: "LE-02", write_possible_today: "yes", rollback_possible_today: "no" },
+  { check_id: "CI-05", write_possible_today: "yes", rollback_possible_today: "yes" },
   { check_id: "SP-07", write_possible_today: "yes", rollback_possible_today: "yes" },
+  { check_id: "SP-03", write_possible_today: "yes", rollback_possible_today: "yes" },
   { check_id: "LE-09", write_possible_today: "yes", rollback_possible_today: "limited" },
   { check_id: "PT-04", write_possible_today: "yes", rollback_possible_today: "yes" },
   { check_id: "LE-04", write_possible_today: "disabled", rollback_possible_today: "n/a" },
-  { check_id: "CI-03", write_possible_today: "disabled", rollback_possible_today: "n/a" },
+  { check_id: "CI-03", write_possible_today: "preview_only", rollback_possible_today: "no" },
   { check_id: "SHOPIFY-ORDER", write_possible_today: "no", rollback_possible_today: "n/a" },
 ];
 
@@ -288,19 +290,31 @@ const MAPPINGS = [
   { check_id: "WB-SHOP-01", enabled: true },
   { check_id: "SP-01", enabled: false },
   { check_id: "LE-01", enabled: true },
+  { check_id: "LE-02", enabled: true },
+  { check_id: "CI-05", enabled: true },
+  { check_id: "LE-05", enabled: true },
   { check_id: "SP-07", enabled: true },
+  { check_id: "SP-03", enabled: true },
   { check_id: "LE-09", enabled: true },
   { check_id: "PT-04", enabled: true },
   { check_id: "LE-04", enabled: false },
+  { check_id: "CI-03", enabled: true },
 ];
 
 function testAllowlist() {
-  console.log("\n1. Excel/sheet allowlist (CI-01, CC-03, WB-SHOP-01, LE-01, SP-07, LE-09, PT-04; SP-01 not MVP1 42)");
-  for (const id of ["CI-01", "CC-03", "WB-SHOP-01", "LE-01", "SP-07", "LE-09", "PT-04"]) {
+  console.log(
+    `\n1. Excel/sheet allowlist (${WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS.join(", ")}; SP-01 not MVP1 42)`,
+  );
+  if (WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS.length < 1) {
+    fail("allowlist loaded from writebacks.ts");
+  } else {
+    pass(`allowlist loaded from writebacks.ts (${WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS.length})`);
+  }
+  for (const id of WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS) {
     if (isWritebackApproveAllowlisted(id)) pass(`${id} allowlisted`);
     else fail(`${id} allowlisted`);
   }
-  for (const id of ["SP-01", "LE-04", "CI-03", "SHOPIFY-ORDER"]) {
+  for (const id of ["SP-01", "LE-04", "CI-03", "SHOPIFY-ORDER", "PT-03"]) {
     if (!isWritebackApproveAllowlisted(id)) pass(`${id} not allowlisted`);
     else fail(`${id} not allowlisted`);
   }
@@ -551,7 +565,7 @@ function testEligibility() {
       ...base,
       writebackExecuteEnabled: true,
       preview: readyPreview({
-        execute_eligible: { sandbox: false, production: false },
+        execute_eligible: { company: false, sandbox: false, production: false },
       }),
       pendingApproval: pendingToken,
     })
@@ -564,7 +578,7 @@ function testEligibility() {
         ...base,
         writebackExecuteEnabled: true,
         preview: readyPreview({
-          execute_eligible: { sandbox: false, production: false },
+          execute_eligible: { company: false, sandbox: false, production: false },
         }),
         pendingApproval: pendingToken,
       }),
@@ -603,6 +617,15 @@ function testEligibility() {
   }
 
   if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "SP-03") &&
+    isWritebackApproveAllowlisted("SP-03")
+  ) {
+    pass("WB-19 SP-03 executable");
+  } else {
+    fail("WB-19 SP-03 executable");
+  }
+
+  if (
     isWritebackSheetExecuteAdvertised(SHEET_ROWS, "LE-09") &&
     isWritebackApproveAllowlisted("LE-09")
   ) {
@@ -620,6 +643,33 @@ function testEligibility() {
     fail("WB-11 PT-04 executable");
   }
 
+  if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "LE-05") &&
+    isWritebackApproveAllowlisted("LE-05")
+  ) {
+    pass("WB-13 LE-05 executable");
+  } else {
+    fail("WB-13 LE-05 executable");
+  }
+
+  if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "LE-02") &&
+    isWritebackApproveAllowlisted("LE-02")
+  ) {
+    pass("WB-14 LE-02 executable");
+  } else {
+    fail("WB-14 LE-02 executable");
+  }
+
+  if (
+    isWritebackSheetExecuteAdvertised(SHEET_ROWS, "CI-05") &&
+    isWritebackApproveAllowlisted("CI-05")
+  ) {
+    pass("WB-15 CI-05 executable");
+  } else {
+    fail("WB-15 CI-05 executable");
+  }
+
   {
     const writebacks = readSrc("src/lib/writebacks.ts");
     const fixPage = readSrc("src/routes/fix.tsx");
@@ -632,6 +682,46 @@ function testEligibility() {
       pass("WB-12 PT-04 success toast honesty");
     } else {
       fail("WB-12 PT-04 success toast honesty");
+    }
+    if (
+      writebacks.includes('=== "LE-05"') &&
+      writebacks.includes("re-run DCS to clear LE-05") &&
+      writebacks.includes("LE-01 / LE-05 / LE-09")
+    ) {
+      pass("WB-13 LE-05 success toast + honesty blurb");
+    } else {
+      fail("WB-13 LE-05 success toast + honesty blurb");
+    }
+    if (
+      writebacks.includes('=== "LE-02"') &&
+      writebacks.includes("re-run DCS to clear LE-02") &&
+      writebacks.includes("Event value correction (LE-02)") &&
+      writebacks.includes('op_kind === "event_correct"') &&
+      writebacks.includes("No Manago restore for event value correction")
+    ) {
+      pass("WB-14 LE-02 success toast + honesty blurb");
+    } else {
+      fail("WB-14 LE-02 success toast + honesty blurb");
+    }
+    if (
+      writebacks.includes('"CI-05"') &&
+      writebacks.includes('=== "CI-05"') &&
+      writebacks.includes("re-run DCS to clear CI-05") &&
+      writebacks.includes("Identity key repair (CI-05)") &&
+      writebacks.includes("reused clusters need CI-03")
+    ) {
+      pass("WB-15 CI-05 success toast + honesty blurb");
+    } else {
+      fail("WB-15 CI-05 success toast + honesty blurb");
+    }
+    if (
+      writebacks.includes("Contact merge (CI-03)") &&
+      writebacks.includes("Merge plan ready — CRM executes") &&
+      !isWritebackApproveAllowlisted("CI-03")
+    ) {
+      pass("WB-16 CI-03 plan-only honesty + Approve off");
+    } else {
+      fail("WB-16 CI-03 plan-only honesty + Approve off");
     }
   }
 
@@ -1145,15 +1235,29 @@ function testRollbackAndHonesty() {
       return {
         title: "No automated writeback for this check",
         detail: "LE-04 blocked",
+        steps: ["Download evidence for manual or integration fix."],
       };
     }
     if (reason === "not_on_allowlist" || reason === "sheet_not_executable") {
+      if (checkId === "CI-03") {
+        return {
+          title: "Merge plan ready — CRM executes",
+          detail: "plan only",
+          steps: [
+            "Run Preview — review survivor / loser / safety_class.",
+            "Download the merge plan.",
+            "CRM manager merges or clears losers in Manago.",
+            "Re-run Data Consistency Score — this check PASSes when evidence clears.",
+          ],
+        };
+      }
       return {
         title: "No automated writeback for this check yet",
         detail: "evidence only",
+        steps: ["Download evidence.", "Re-run Data Consistency Score — this check PASSes when evidence clears."],
       };
     }
-    return { title: "Writeback not available", detail: reason };
+    return { title: "Writeback not available", detail: reason, steps: [] };
   }
 
   const le04 = writebackNonExecutableHonesty("LE-04", SHEET_ROWS);
@@ -1161,10 +1265,10 @@ function testRollbackAndHonesty() {
   else fail("LE-04 honesty title", le04?.title);
 
   const ci03 = writebackNonExecutableHonesty("CI-03", SHEET_ROWS);
-  if (ci03?.title.includes("No automated writeback for this check yet")) {
-    pass("CI-03 Excel-rest honesty");
+  if (ci03?.title.includes("Merge plan ready") && (ci03.steps?.length ?? 0) >= 3) {
+    pass("CI-03 Excel-rest honesty + steps");
   } else {
-    fail("CI-03 Excel-rest honesty", ci03?.title);
+    fail("CI-03 Excel-rest honesty + steps", JSON.stringify(ci03));
   }
 
   const cc03 = writebackNonExecutableHonesty("CC-03", SHEET_ROWS);
@@ -1177,6 +1281,48 @@ function testRollbackAndHonesty() {
     "writebacks.ts",
     "writebackNonExecutableHonesty",
     "Phase 4 honesty helper exported",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "WRITEBACK_PASS_STEPS",
+    "REAL-01 Phase B: authored Steps to pass map",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "WRITEBACK_EXECUTE_ELIGIBLE_FAIL_CLOSED",
+    "WB-21 FE #61: fail-closed execute_eligible constant",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "company: false",
+    "WB-21 FE #61: fail-closed company default",
+  );
+  assertNotIncludes(
+    writebacks,
+    "writebacks.ts",
+    "company: true,\n    sandbox: true",
+    "WB-21 FE #61: no invent Allow writebacks ON when hydrating",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    'owner: "External integrator"',
+    "REAL-01 Phase B: PT-01 External steps",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "RESTV2.PRODUCT.IMPORT",
+    "REAL-01 Phase B: PT-03 capability gate in steps",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "Download merge plan",
+    "REAL-01 Phase B: CI-03 download label",
   );
   assertIncludes(
     writebacks,
@@ -1207,8 +1353,50 @@ function testRollbackAndHonesty() {
   assertIncludes(
     fixPage,
     "fix.tsx",
-    "Evidence only · no automated write from this screen.",
-    "Phase 4: gov honesty for non-writable",
+    "writeback-steps-to-pass",
+    "REAL-01 Phase B: Steps to pass panel",
+  );
+  assertIncludes(
+    fixPage,
+    "fix.tsx",
+    "Steps to pass this check",
+    "REAL-01 Phase B: Steps heading",
+  );
+  assertIncludes(
+    fixPage,
+    "fix.tsx",
+    "Why Approve won’t write",
+    "REAL-01 Phase B: why Approve won’t write",
+  );
+  assertIncludes(
+    fixPage,
+    "fix.tsx",
+    "formatCustomerSuggestedFix",
+    "REAL-01 Phase B: DCS suggested fix on Fix",
+  );
+  assertIncludes(
+    fixPage,
+    "fix.tsx",
+    "writebackNonExecutableGovHead",
+    "REAL-01 Phase B: gov head helper for non-writable",
+  );
+  assertIncludes(
+    fixPage,
+    "fix.tsx",
+    "writebackNonExecutableStatusLabel",
+    "REAL-01 Phase B: status badge helper for non-writable",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "Plan only · Approve will not write",
+    "REAL-01 Phase B: plan_only status label",
+  );
+  assertIncludes(
+    writebacks,
+    "writebacks.ts",
+    "product_import|preview\\s*ok",
+    "REAL-01 Phase B: PT-03 Preview advertised while write=no",
   );
   assertIncludes(
     fixPage,

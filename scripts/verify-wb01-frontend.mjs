@@ -137,7 +137,7 @@ function testPreviewFormatter() {
       },
     ],
     summary: { ready: 1, skipped: 0, errors: 0, executed: 0 },
-    execute_eligible: { sandbox: true, production: false },
+    execute_eligible: { company: true, sandbox: true, production: false },
     approval_tier: "batch",
   };
 

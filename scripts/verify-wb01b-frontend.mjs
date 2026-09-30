@@ -147,8 +147,9 @@ function testStaticWiring() {
   assertNotIncludes(writebacks, "writebacks.ts", "/writebacks/execute/", "no execute API on FE");
 
   const fixFlow = readSrc("src/lib/fix-flow.ts");
-  assertIncludes(fixFlow, "fix-flow.ts", '"sandbox-mapping"', "sandbox-mapping target kind");
-  assertIncludes(fixFlow, "fix-flow.ts", "buildSandboxWritebackFixPlan", "sandbox plan resolver");
+  assertIncludes(fixFlow, "fix-flow.ts", '"mapping-only"', "mapping-only target kind (PRD-WB-21 Phase D)");
+  assertIncludes(fixFlow, "fix-flow.ts", "buildMappingOnlyWritebackFixPlan", "mapping-only plan resolver");
+  assertNotIncludes(fixFlow, "fix-flow.ts", '"sandbox-mapping"', "no legacy sandbox-mapping kind");
   assertIncludes(fixFlow, "fix-flow.ts", "isFixTargetWritebackCapable", "writeback-capable helper");
 
   const livePlan = readSrc("src/lib/fix-live-plan.ts");
@@ -161,8 +162,20 @@ function testStaticWiring() {
   assertIncludes(
     livePlan,
     "fix-live-plan.ts",
+    "buildMappingOnlyWritebackFixPlan",
+    "mapping-only fix plan builder",
+  );
+  assertIncludes(
+    livePlan,
+    "fix-live-plan.ts",
     "buildSandboxWritebackFixPlan",
-    "sandbox fix plan builder",
+    "deprecated sandbox alias kept",
+  );
+  assertIncludes(
+    livePlan,
+    "fix-live-plan.ts",
+    "Run writeback preview before requesting approval",
+    "honest Fix badge (not Sandboxed Passed)",
   );
 
   const fixPage = readSrc("src/routes/fix.tsx");

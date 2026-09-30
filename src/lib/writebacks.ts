@@ -4,15 +4,20 @@ import { apiRequest } from "@/lib/api";
 export const WRITEBACK_PREVIEW_BLOCKED_CHECK_IDS = ["LE-04"] as const;
 
 /**
- * PRD-WB-02 §3.1 — Approve may write only these checks (sheet sandbox_only + registry).
+ * PRD-WB-02 §3.1 — Approve may write only these checks (sheet yes + registry).
  * Safety net matching WRITEBACK_POSSIBLE_NOT_SHEET.csv / WRITEBACK_CHECK_ALLOWLIST.
+ * PRD-WB-21: Tier A ⊆ this allowlist; sheet value is yes (not sandbox_only).
  */
 export const WRITEBACK_APPROVE_EXECUTABLE_CHECK_IDS = [
   "CI-01",
+  "CI-05",
   "CC-03",
   "WB-SHOP-01",
   "LE-01",
+  "LE-02",
+  "LE-05",
   "SP-07",
+  "SP-03",
   "LE-09",
   "PT-04",
 ] as const;
@@ -120,10 +125,24 @@ export type WritebackPreviewResult = {
   intents: WritebackIntent[];
   summary: WritebackRunSummary;
   execute_eligible: {
+    /** PRD-WB-21 Phase D — Allow writebacks (preferred name). */
+    company?: boolean;
+    /** Legacy alias of company. */
     sandbox: boolean;
     production: boolean;
   };
 };
+
+/**
+ * PRD-WB-21 / FE #61 review — when API omits execute_eligible, never invent
+ * Allow writebacks ON. Missing field = ineligible (fail-closed).
+ */
+export const WRITEBACK_EXECUTE_ELIGIBLE_FAIL_CLOSED: WritebackPreviewResult["execute_eligible"] =
+  {
+    company: false,
+    sandbox: false,
+    production: false,
+  };
 
 export type WritebackGate = "open" | "locked" | "rolled_back" | "no_dcs_run";
 
@@ -154,6 +173,7 @@ export type WritebackStatusPreview = {
   intents?: WritebackIntent[];
   summary?: WritebackRunSummary;
   execute_eligible?: {
+    company?: boolean;
     sandbox: boolean;
     production: boolean;
   };
@@ -314,6 +334,7 @@ function formatIntentStatus(
   if (status === "error" && errorReason) return `Error · ${errorReason}`;
   if (status === "skipped") {
     if (errorReason === "already_at_target") return "Already applied";
+    if (errorReason === "skip_unevidenced") return "Skip · unevidenced";
     return errorReason ? `Skipped · ${errorReason}` : "Skipped";
   }
   if (status === "executed") return "Executed";
@@ -343,7 +364,9 @@ export function writebackExecuteEligibilityNote(
   eligible: WritebackPreviewResult["execute_eligible"],
 ): string {
   if (eligible.production) return "Execute available after approval.";
-  if (eligible.sandbox) return "Execute available after admin approval.";
+  if (eligible.company === true || eligible.sandbox) {
+    return "Execute available after admin approval.";
+  }
   return "Enable writebacks in Settings → Workspace to approve.";
 }
 
@@ -482,7 +505,7 @@ export function writebackPossibleRowsForCheck(
 
 export function formatWritePossibleLabel(value: string | undefined): string {
   const v = (value ?? "").trim().toLowerCase();
-  if (v === "yes") return "Yes";
+  if (v === "yes" || v === "sandbox_only") return "Yes"; // sandbox_only = legacy alias of yes
   if (v === "no") return "No";
   if (v === "preview_only") return "Preview only";
   if (v === "disabled") return "Disabled";
@@ -516,9 +539,14 @@ export function isWritebackSheetPreviewAdvertised(
 ): boolean | undefined {
   const match = writebackPossibleRowsForCheck(rows, checkId);
   if (!match.length) return undefined;
-  return match.some((row) =>
-    ADVERTISED_WRITE_STATES.has(row.write_possible_today.trim().toLowerCase()),
-  );
+  return match.some((row) => {
+    const state = row.write_possible_today.trim().toLowerCase();
+    if (ADVERTISED_WRITE_STATES.has(state)) return true;
+    // WB-20 / REAL-01: write=no until Loom still allows Preview when blocker/note says so.
+    if (state !== "no") return false;
+    const hint = `${row.blocker ?? ""} ${row.evidence_note ?? ""}`;
+    return /product_import|preview\s*ok/i.test(hint);
+  });
 }
 
 export function isWritebackPreviewAvailable(
@@ -559,7 +587,7 @@ export function isWritebackApproveAllowlisted(
 }
 
 /**
- * Sheet SoT for Approve: at least one row must be sandbox_only or yes.
+ * Sheet SoT for Approve: at least one row must be yes (legacy sandbox_only still accepted).
  * preview_only / disabled / no → not executable.
  */
 export function isWritebackSheetExecuteAdvertised(
@@ -668,7 +696,7 @@ function resolveWritebackPreviewExecutionBlockReason(
   if (!isWritebackDiffHashValid(preview.diff_hash)) return "invalid_diff_hash";
   if (
     input.writebackExecuteEnabled !== true &&
-    !preview.execute_eligible?.sandbox &&
+    !(preview.execute_eligible?.company === true || preview.execute_eligible?.sandbox) &&
     !preview.execute_eligible?.production
   ) {
     return "company_execute_disabled";
@@ -898,8 +926,264 @@ export function writebackSheetBlockerNote(
   return null;
 }
 
+function writebackSheetPackFields(
+  rows: WritebackPossibleRow[] | undefined,
+  checkId: string | undefined,
+): {
+  owner: string | null;
+  fixType: string | null;
+  summary: string | null;
+} {
+  const match = writebackPossibleRowsForCheck(rows, checkId);
+  const row = match[0];
+  if (!row) {
+    return { owner: null, fixType: null, summary: null };
+  }
+  return {
+    owner: row.pack_fix_owner?.trim() || null,
+    fixType: row.pack_fix_type?.trim() || null,
+    summary: row.pack_suggested_fix_summary?.trim() || null,
+  };
+}
+
+const RERUN_DCS_STEP =
+  "Re-run Data Consistency Score — this check PASSes when evidence clears.";
+
+/** PRD-REAL-01 §5 — authored Steps to pass for non–Klints-Approve checks. */
+const WRITEBACK_PASS_STEPS: Record<
+  string,
+  {
+    owner: string;
+    fixType: string;
+    steps: string[];
+    downloadLabel: string;
+  }
+> = {
+  "CI-03": {
+    owner: "CRM manager",
+    fixType: "Automated writeback (approved) — plan only",
+    downloadLabel: "Download merge plan",
+    steps: [
+      "Run Preview — review survivor / loser / safety_class.",
+      "Download the merge plan.",
+      "CRM manager merges or clears losers in Manago (Klints does not auto-merge; no email-delete).",
+      "Tombstone / clean Klints Contact DB as required by plan notes.",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "CC-01": {
+    owner: "Data lead",
+    fixType: "Integration build + Automated writeback — plan only",
+    downloadLabel: "Download consent plan",
+    steps: [
+      "Preview + download the consent reconcile plan (FORCE_OPT_OUT / FORCE_OPT_IN / SKIP_UNEVIDENCED).",
+      "Data lead applies policy in Manago (Phase A: Klints does not auto-apply forceOpt*).",
+      "Prefer CC-03 evidence clean where the plan requires Shopify evidence.",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "CC-02": {
+    owner: "Data lead",
+    fixType: "Integration build + Automated writeback — plan only",
+    downloadLabel: "Download SMS consent plan",
+    steps: [
+      "Preview + download the SMS consent plan (forcePhoneOpt* / SKIP; unreachable Download-only).",
+      "Data lead applies policy in Manago (Phase A: Klints does not auto-apply forcePhoneOpt*).",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "PT-03": {
+    owner: "Klints (automated)",
+    fixType: "Integration build + Automated writeback — Preview until PRODUCT.IMPORT",
+    downloadLabel: "Download evidence",
+    steps: [
+      "Confirm Shopify products + Manago catalog are connected.",
+      "Use Fix Preview for the upsert / archive plan (download attribute-empty rows as needed).",
+      "Approve stays off until RESTV2.PRODUCT.IMPORT is capability-confirmed (Loom) and allowlists are enabled.",
+      "After execute unlock: Approve upsert missing products + archive surplus (no hard-delete).",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "PT-01": {
+    owner: "External integrator",
+    fixType: "Integration build + Automated writeback (approved)",
+    downloadLabel: "Download evidence",
+    steps: [
+      "Owner is External integrator — Klints Approve will not write.",
+      "Agree product ID convention (events ↔ catalog; often Shopify product.id = Manago productId).",
+      "Fix dangling IDs in Manago events and/or catalog (integrator tools / historical map).",
+      "Do not use PT-03 upsert as a substitute for PT-01 ID convention.",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "BR-01": {
+    owner: "Data lead",
+    fixType: "Automated writeback (approved) — not Klints execute in MVP1",
+    downloadLabel: "Download evidence",
+    steps: [
+      "Owner is Data lead — no Klints Approve mapping in MVP1.",
+      "Provide margin / cost coverage into the Manago product catalog (ERP or agreed feed).",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "LE-08": {
+    owner: "External integrator",
+    fixType: "Integration build + Automated writeback (approved)",
+    downloadLabel: "Download evidence",
+    steps: [
+      "Owner is External integrator — Klints Approve will not write.",
+      "Close or update stale CART via integration.",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "LE-04": {
+    owner: "External integrator",
+    fixType: "Integration build + Manual",
+    downloadLabel: "Download evidence",
+    steps: [
+      "Mapping is intentionally off (pack / registry).",
+      "Download evidence for manual or integration fix.",
+      "Do not enable Approve without a new product decision + sheet/registry change.",
+      RERUN_DCS_STEP,
+    ],
+  },
+  "SP-01": {
+    owner: "Klints (automated)",
+    fixType: "Automated writeback (approved) — disabled stub",
+    downloadLabel: "Download evidence",
+    steps: [
+      "SP-01 is not in MVP1-42 CHECK_MASTER and has no DCS executor.",
+      "Do not advertise Fix Approve for this stub.",
+      "Out of operator Fix path for scored MVP1 issues.",
+    ],
+  },
+};
+
+export type WritebackNonExecutableHonesty = {
+  title: string;
+  /** Why Approve will not write (honesty). */
+  detail: string;
+  owner?: string | null;
+  fixType?: string | null;
+  suggestedFix?: string | null;
+  packSummary?: string | null;
+  /** Numbered Steps to pass (PRD-REAL-01 §4–§5). */
+  steps: string[];
+  downloadLabel?: string;
+  retry?: boolean;
+  /**
+   * Operator surface for badges/gov (REAL-01 Phase B).
+   * plan_only / preview_gated may still offer Writeback preview.
+   */
+  surface?:
+    | "plan_only"
+    | "preview_gated"
+    | "not_executable"
+    | "load_error";
+};
+
+/** Badge / gov short line for non-executable Fix honesty. */
+export function writebackNonExecutableStatusLabel(
+  honesty: Pick<WritebackNonExecutableHonesty, "surface"> | null | undefined,
+): string {
+  switch (honesty?.surface) {
+    case "plan_only":
+      return "Plan only · Approve will not write";
+    case "preview_gated":
+      return "Preview only · Approve blocked until capability";
+    case "load_error":
+      return "Writeback availability unknown · retry";
+    default:
+      return "Evidence only · writeback not available";
+  }
+}
+
+export function writebackNonExecutableGovHead(
+  honesty: Pick<WritebackNonExecutableHonesty, "surface"> | null | undefined,
+): string {
+  switch (honesty?.surface) {
+    case "plan_only":
+      return "Plan only · Preview/Download for owner — Approve will not write.";
+    case "preview_gated":
+      return "Preview available · Approve stays off until capability is confirmed.";
+    case "load_error":
+      return "Could not confirm writeback availability — retry sheet/mappings.";
+    default:
+      return "Evidence only · no automated write from this screen.";
+  }
+}
+
+export type WritebackNonExecutableHonestyHints = {
+  suggestedFix?: string | null;
+  fixOwner?: string | null;
+  fixType?: string | null;
+};
+
+function buildGenericPassSteps(input: {
+  id: string;
+  owner: string | null;
+  packSummary: string | null;
+  blocker: string | null;
+}): string[] {
+  const steps: string[] = [];
+  if (input.owner) {
+    steps.push(`Owner: ${input.owner} — Klints Approve will not write for this check.`);
+  } else {
+    steps.push(
+      `${input.id}: automated writeback is not available — use evidence and the suggested fix.`,
+    );
+  }
+  if (input.packSummary) {
+    steps.push(input.packSummary);
+  }
+  if (input.blocker) {
+    steps.push(`Blocker: ${input.blocker}.`);
+  }
+  steps.push("Download evidence for the system of record fix.");
+  steps.push(RERUN_DCS_STEP);
+  return steps;
+}
+
+function attachPassMeta(
+  base: WritebackNonExecutableHonesty,
+  id: string,
+  possibleRows: WritebackPossibleRow[] | undefined,
+  hints?: WritebackNonExecutableHonestyHints,
+): WritebackNonExecutableHonesty {
+  const pack = writebackSheetPackFields(possibleRows, id);
+  const authored = WRITEBACK_PASS_STEPS[id];
+  const owner =
+    hints?.fixOwner?.trim() || authored?.owner || pack.owner || null;
+  const fixType =
+    hints?.fixType?.trim() || authored?.fixType || pack.fixType || null;
+  const suggestedFix = hints?.suggestedFix?.trim() || null;
+  const packSummary = pack.summary;
+  const steps =
+    authored?.steps ??
+    (base.steps.length
+      ? base.steps
+      : buildGenericPassSteps({
+          id,
+          owner,
+          packSummary,
+          blocker: writebackSheetBlockerNote(possibleRows, id),
+        }));
+  const downloadLabel =
+    authored?.downloadLabel ?? base.downloadLabel ?? "Download evidence";
+
+  return {
+    ...base,
+    owner,
+    fixType,
+    suggestedFix,
+    packSummary,
+    steps,
+    downloadLabel,
+  };
+}
+
 /**
- * PRD-WB-02 §6.4 honesty copy for live issues that cannot Approve/write.
+ * PRD-WB-02 §6.4 + PRD-REAL-01 Phase B — honesty + Steps to pass when Approve cannot write.
  * Evidence stays; do not claim data was written.
  */
 export function writebackNonExecutableHonesty(
@@ -910,7 +1194,8 @@ export function writebackNonExecutableHonesty(
     possibleLoadError?: boolean;
     mappingsLoadError?: boolean;
   },
-): { title: string; detail: string; retry?: boolean } | null {
+  issueHints?: WritebackNonExecutableHonestyHints,
+): WritebackNonExecutableHonesty | null {
   const reason = resolveWritebackStructuralBlockReason({
     checkId,
     possibleRows,
@@ -923,6 +1208,28 @@ export function writebackNonExecutableHonesty(
   const id = normalizeWritebackCheckId(checkId) ?? "this check";
   const blocker = writebackSheetBlockerNote(possibleRows, checkId);
 
+  // PT-03: Preview OK / Approve gated — do not fall through to generic
+  // "no automated writeback" when structural reason is not_on_allowlist/sheet.
+  if (
+    id === "PT-03" &&
+    reason !== "sheet_load_error" &&
+    reason !== "mapping_load_error"
+  ) {
+    return attachPassMeta(
+      {
+        title: "Catalog reconcile — Preview only until PRODUCT.IMPORT",
+        detail: blocker
+          ? `PT-03: ${blocker}. Preview is available; Approve stays off until RESTV2.PRODUCT.IMPORT is capability-confirmed (Loom).`
+          : "PT-03 Preview is available; Approve stays off until PRODUCT.IMPORT is confirmed (Loom). Do not treat Preview as live sandbox proof.",
+        steps: [],
+        surface: "preview_gated",
+      },
+      id,
+      possibleRows,
+      issueHints,
+    );
+  }
+
   if (reason === "sheet_load_error" || reason === "mapping_load_error") {
     return {
       title: "Writeback availability unknown",
@@ -930,41 +1237,120 @@ export function writebackNonExecutableHonesty(
         reason === "mapping_load_error"
           ? "Could not load writeback registry mappings. Retry to confirm Approve availability for this check."
           : "Could not load writeback sheet data. Retry to see whether Approve is available for this check.",
+      steps: [
+        "Retry loading writeback sheet / mappings.",
+        "If load keeps failing, download evidence and fix offline, then re-run DCS.",
+      ],
+      downloadLabel: "Download evidence",
       retry: true,
+      surface: "load_error",
     };
   }
 
   if (reason === "preview_blocked" || id === "LE-04") {
-    return {
-      title: "No automated writeback for this check",
-      detail: blocker
-        ? `${id} is blocked for writeback (${blocker}). Download evidence for manual or integration fix — Approve will not write to Manago.ai or Shopify.`
-        : `${id} has no automated writeback. Download evidence for manual or integration fix — Approve will not write to Manago.ai or Shopify.`,
-    };
+    return attachPassMeta(
+      {
+        title: "No automated writeback for this check",
+        detail: blocker
+          ? `${id} is blocked for writeback (${blocker}). Download evidence for manual or integration fix — Approve will not write to Manago.ai or Shopify.`
+          : `${id} has no automated writeback. Download evidence for manual or integration fix — Approve will not write to Manago.ai or Shopify.`,
+        steps: [],
+        surface: "not_executable",
+      },
+      id,
+      possibleRows,
+      issueHints,
+    );
   }
 
   if (reason === "not_on_allowlist" || reason === "sheet_not_executable") {
-    return {
-      title: "No automated writeback for this check yet",
-      detail: blocker
-        ? `${id}: ${blocker}. Automated writeback is not available for this check. Download evidence for manual or integration fix.`
-        : "Automated writeback is not available for this check yet. Download evidence for manual or integration fix.",
-    };
+    if (id === "CI-03") {
+      return attachPassMeta(
+        {
+          title: "Merge plan ready — CRM executes",
+          detail: blocker
+            ? `${id}: ${blocker}. Preview + Download show survivor/loser/safety_class. Approve will not merge or delete.`
+            : "CI-03 proposes a duplicate-contact merge plan — not auto-merged. Preview + Download for CRM. Approve will not write.",
+          steps: [],
+          surface: "plan_only",
+        },
+        id,
+        possibleRows,
+        issueHints,
+      );
+    }
+    if (id === "CC-01") {
+      return attachPassMeta(
+        {
+          title: "Consent reconcile plan — Data lead executes",
+          detail: blocker
+            ? `${id}: ${blocker}. Preview + Download show FORCE_OPT_OUT / FORCE_OPT_IN / SKIP_UNEVIDENCED plan rows. Approve will not apply forceOpt in Phase A.`
+            : "CC-01 proposes an email consent reconcile plan — not auto-applied. Preview + Download for Data lead. Approve will not write in Phase A.",
+          steps: [],
+          surface: "plan_only",
+        },
+        id,
+        possibleRows,
+        issueHints,
+      );
+    }
+    if (id === "CC-02") {
+      return attachPassMeta(
+        {
+          title: "SMS consent reconcile plan — Data lead executes",
+          detail: blocker
+            ? `${id}: ${blocker}. Preview + Download show FORCE_PHONE_OPT_OUT / FORCE_PHONE_OPT_IN / SKIP_UNEVIDENCED plan rows; consented-but-unreachable is Download-only. Approve will not apply forcePhoneOpt in Phase A.`
+            : "CC-02 proposes an SMS/mobile consent reconcile plan — not auto-applied. Preview + Download for Data lead. Approve will not write in Phase A.",
+          steps: [],
+          surface: "plan_only",
+        },
+        id,
+        possibleRows,
+        issueHints,
+      );
+    }
+    return attachPassMeta(
+      {
+        title: "No automated writeback for this check yet",
+        detail: blocker
+          ? `${id}: ${blocker}. Automated writeback is not available for this check. Download evidence for manual or integration fix.`
+          : "Automated writeback is not available for this check yet. Download evidence for manual or integration fix.",
+        steps: [],
+        surface: "not_executable",
+      },
+      id,
+      possibleRows,
+      issueHints,
+    );
   }
 
   if (reason === "mapping_disabled") {
-    return {
-      title: "Writeback mapping disabled",
-      detail: `${id} mapping is not enabled. Download evidence for manual or integration fix — Approve will not write.`,
-    };
+    return attachPassMeta(
+      {
+        title: "Writeback mapping disabled",
+        detail: `${id} mapping is not enabled. Download evidence for manual or integration fix — Approve will not write.`,
+        steps: [],
+        surface: "not_executable",
+      },
+      id,
+      possibleRows,
+      issueHints,
+    );
   }
 
-  return {
-    title: "Writeback not available",
-    detail:
-      writebackApproveBlockMessage(reason) ??
-      "Download evidence for manual or integration fix. Approve will not write.",
-  };
+  return attachPassMeta(
+    {
+      title: "Writeback not available",
+      detail:
+        writebackApproveBlockMessage(reason) ??
+        "Download evidence for manual or integration fix. Approve will not write.",
+      steps: [],
+      surface: "not_executable",
+    },
+    id,
+    possibleRows,
+    issueHints,
+  );
 }
 
 /** Sheet says rollback yes for any row of this check. */
@@ -1014,12 +1400,38 @@ export function writebackIrreversibleHonestyNotice(
   };
 }
 
+/** CI-05 ready=0 after preview — honest, not a transport error. */
+export function writebackCi05EmptyPreviewNotice(
+  preview: WritebackPreviewResult | null | undefined,
+  checkId?: string | null,
+): { title: string; detail: string } | null {
+  const id = normalizeWritebackCheckId(checkId || preview?.check_id);
+  if (id !== "CI-05") return null;
+  if (!preview) return null;
+  if ((preview.summary?.ready ?? 0) >= 1) return null;
+  const detail =
+    preview.operator_disclosure?.trim() ||
+    "CI-05 only backfills empty Manago externalId on clean 1:1 email matches. " +
+      "If this estate FAILs on dangling externalId (Shopify customer missing), " +
+      "Download evidence shows each Manago contact to clear manually — Approve does not clear those. " +
+      "Reused externalId clusters need CI-03 / merge. Re-run DCS after fixes.";
+  return {
+    title: "No writeable missing keys on this estate",
+    detail,
+  };
+}
+
 /** Non-blocking operator note (e.g. WB-SHOP-01 note vs metafield). */
 export function writebackOperatorInfoNotice(
   preview: WritebackPreviewResult | null | undefined,
   mapping?: WritebackMappingEntry | null,
 ): { title: string; detail: string } | null {
   if (writebackMappingIrreversible(preview, mapping)) return null;
+  const emptyCi05 = writebackCi05EmptyPreviewNotice(
+    preview,
+    preview?.check_id || mapping?.check_id,
+  );
+  if (emptyCi05) return emptyCi05;
   const detail =
     preview?.operator_disclosure?.trim() || mapping?.operator_disclosure?.trim();
   if (!detail) return null;
@@ -1029,7 +1441,7 @@ export function writebackOperatorInfoNotice(
   };
 }
 
-/** W6-01 — event ingest / limited rollback honesty from possible sheet. */
+/** W6-01 — event ingest / value-correct / limited rollback honesty from possible sheet. */
 export function writebackLimitedRollbackHonesty(
   rows: WritebackPossibleRow[] | undefined,
   checkId: string | undefined,
@@ -1041,7 +1453,15 @@ export function writebackLimitedRollbackHonesty(
     return value === "no" || value === "disabled" || value === "limited" || value === "n/a";
   });
   const eventIngest = match.some((row) => row.op_kind === "event_ingest");
-  if (!limitedRollback && !eventIngest) return null;
+  const eventCorrect = match.some((row) => row.op_kind === "event_correct");
+  if (!limitedRollback && !eventIngest && !eventCorrect) return null;
+  if (eventCorrect) {
+    return {
+      title: "No Manago restore for event value correction",
+      detail:
+        "updateContactExtEvent overwrites PURCHASE value (full field resend). Prior values stay in Klints raw only — not restorable in Manago.",
+    };
+  }
   if (eventIngest) {
     return {
       title: "Limited rollback for event writes",
@@ -1125,7 +1545,7 @@ export function writebackPossibleToTable(
     columns: [...WRITEBACK_POSSIBLE_COLUMNS],
     rows: tableRows,
     helper:
-      "Honest write surfaces from the possible/not sheet. Rollback = manual admin undo when supported — not automatic on error. Shopify metafield (namespace=klints) is documented but not execute yet; WB-SHOP-01 uses customer note. Event ingest (LE-01 / LE-09) has limited rollback.",
+      "Honest write surfaces from the possible/not sheet. Rollback = manual admin undo when supported — not automatic on error. Shopify metafield (namespace=klints) is documented but not execute yet; WB-SHOP-01 uses customer note. Event ingest (LE-01 / LE-05 / LE-09) has limited rollback. Event value correction (LE-02) overwrites via updateContactExtEvent and is not restorable in Manago. Identity key repair (CI-05) sets Manago externalId on clean email matches only — reused clusters need CI-03; ambiguous matches are skipped. Contact merge (CI-03) is plan-only Preview/Download — not auto-merged; CRM manager executes in Manago. Email consent reconcile (CC-01) is plan-only Preview/Download — Data lead; forceOpt not auto-applied in Phase A. SMS consent reconcile (CC-02) is plan-only Preview/Download — Data lead; forcePhoneOpt not auto-applied in Phase A. Detail schema normalise (SP-03) Approves mixed-format Manago properties per format contract — semantic duplicate keys stay Download-only. Catalog reconcile (PT-03) Previews T7 product_upsert — Approve execute waits for PRODUCT.IMPORT Loom; attribute_empty Download-only.",
   };
 }
 
@@ -1472,7 +1892,8 @@ export function executeResultFromWritebackStatus(
       errors: 0,
       executed: 0,
     },
-    execute_eligible: { sandbox: true, production: false },
+    // Status execute payloads do not carry eligibility — fail-closed (FE #61).
+    execute_eligible: WRITEBACK_EXECUTE_ELIGIBLE_FAIL_CLOSED,
   };
 }
 
@@ -1500,10 +1921,9 @@ export function previewResultFromWritebackStatus(
     operator_disclosure: latest.operator_disclosure ?? null,
     intents: latest.intents ?? [],
     summary,
-    execute_eligible: latest.execute_eligible ?? {
-      sandbox: true,
-      production: false,
-    },
+    // Missing execute_eligible must not invent Allow writebacks ON (FE #61).
+    execute_eligible:
+      latest.execute_eligible ?? WRITEBACK_EXECUTE_ELIGIBLE_FAIL_CLOSED,
   };
 }
 
@@ -1659,7 +2079,7 @@ export function isWritebackExecuteSuccess(
   return (result.summary?.executed ?? 0) >= 1;
 }
 
-/** Toast after successful Approve execute (WB-12: PT-04 reminds re-run DCS). */
+/** Toast after successful Approve execute (WB-12 PT-04 / WB-13 LE-05 remind re-run DCS). */
 export function writebackExecuteSuccessToastMessage(
   result: WritebackExecuteResult,
   platformLabel?: string | null,
@@ -1669,8 +2089,15 @@ export function writebackExecuteSuccessToastMessage(
   let message = `Writeback applied · ${result.check_id} · ${executed} update${
     executed === 1 ? "" : "s"
   }${platform ? ` · ${platform}` : ""}`;
-  if (normalizeWritebackCheckId(result.check_id) === "PT-04") {
+  const checkId = normalizeWritebackCheckId(result.check_id);
+  if (checkId === "PT-04") {
     message += " · re-run DCS to clear PT-04";
+  } else if (checkId === "LE-05") {
+    message += " · re-run DCS to clear LE-05";
+  } else if (checkId === "LE-02") {
+    message += " · re-run DCS to clear LE-02";
+  } else if (checkId === "CI-05") {
+    message += " · re-run DCS to clear CI-05";
   }
   return message;
 }

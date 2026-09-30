@@ -168,8 +168,8 @@ export function buildLiveFixPlan(
   };
 }
 
-/** Minimal Fix plan for writeback mappings (e.g. WB-SHOP-01). */
-export function buildSandboxWritebackFixPlan(
+/** Minimal Fix plan for writeback mappings without worklist FAIL (e.g. WB-SHOP-01). */
+export function buildMappingOnlyWritebackFixPlan(
   mapping: WritebackMappingEntry,
 ): FixPlan {
   const checkId = mapping.check_id.trim();
@@ -235,3 +235,7 @@ export function buildSandboxWritebackFixPlan(
     ctaLabel: "Proceed to Workflow Studio",
   };
 }
+
+/** @deprecated PRD-WB-21 Phase D — use buildMappingOnlyWritebackFixPlan */
+export const buildSandboxWritebackFixPlan = buildMappingOnlyWritebackFixPlan;
+

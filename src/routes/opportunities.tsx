@@ -40,6 +40,8 @@ import {
   isBuildableStatus,
   isSupplementalGate,
   isSupplementalBlocker,
+  blockerCheckId,
+  buildPilotUnlockGuide,
   parseUseCaseSearch,
   pilotStatusLabel,
   pilotStatusTone,
@@ -47,6 +49,7 @@ import {
   UC_DETAIL_QUERY_KEY,
   UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
+  type PilotUnlockGuide,
   type UseCaseBlocker,
   type UseCaseCheckResult,
   type UseCasePilotRecommendation,
@@ -193,7 +196,7 @@ function checkResultClass(result: string): string {
 
 function BlockerDeepLink({ blocker }: { blocker: UseCaseBlocker }) {
   const label = blocker.detail;
-  // DCS-09: supplemental FAIL/UNKNOWN must not deep-link into score tiles.
+  // DCS-09: supplemental FAIL/UNKNOWN must not deep-link into score tiles / Fix.
   if (isSupplementalBlocker(blocker)) {
     return (
       <span>
@@ -204,11 +207,13 @@ function BlockerDeepLink({ blocker }: { blocker: UseCaseBlocker }) {
       </span>
     );
   }
-  if (blocker.check_id) {
+  // Prefer Fix for any gating check_id (field or ?issue= on href) — Phase C.
+  const checkId = blockerCheckId(blocker);
+  if (checkId) {
     return (
       <Link
-        to="/data-consistency"
-        search={{ issue: blocker.check_id }}
+        to="/fix"
+        search={{ issue: checkId }}
         className="text-primary underline-offset-2 hover:underline"
       >
         {label}
@@ -230,12 +235,10 @@ function BlockerDeepLink({ blocker }: { blocker: UseCaseBlocker }) {
     blocker.code === "min_dcs" ||
     blocker.href?.startsWith("/data-consistency")
   ) {
-    const issueMatch = blocker.href?.match(/[?&]issue=([^&]+)/);
-    const issue = issueMatch ? decodeURIComponent(issueMatch[1]) : undefined;
     return (
       <Link
         to="/data-consistency"
-        search={issue ? { issue } : {}}
+        search={{}}
         className="text-primary underline-offset-2 hover:underline"
       >
         {label}
@@ -243,6 +246,42 @@ function BlockerDeepLink({ blocker }: { blocker: UseCaseBlocker }) {
     );
   }
   return <span>{label}</span>;
+}
+
+function PilotUnlockStepsPanel({ guide }: { guide: PilotUnlockGuide }) {
+  return (
+    <div
+      className="rounded-md border border-border bg-elevated/60 px-3.5 py-3"
+      role="status"
+      data-testid="pilot-steps-to-unlock"
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        {guide.title}
+      </div>
+      <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-[13px] leading-relaxed text-foreground">
+        {guide.steps.map((step, index) => (
+          <li key={`${index}-${step.text.slice(0, 24)}`}>
+            {step.link ? (
+              <Link
+                to={step.link.to}
+                search={step.link.search ?? {}}
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                {step.text}
+              </Link>
+            ) : (
+              step.text
+            )}
+          </li>
+        ))}
+      </ol>
+      {guide.footnote ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          {guide.footnote}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function OpportunityTrackerPage() {
@@ -308,6 +347,11 @@ function OpportunityTrackerPage() {
         ? pilots.find((p) => p.use_case_id.toUpperCase() === uc.toUpperCase())
         : undefined,
     [pilots, uc],
+  );
+
+  const selectedPilotUnlockGuide = useMemo(
+    () => (selectedPilot ? buildPilotUnlockGuide(selectedPilot) : null),
+    [selectedPilot],
   );
 
   const {
@@ -788,6 +832,10 @@ function OpportunityTrackerPage() {
               </div>
             ) : null}
 
+            {selectedPilotUnlockGuide ? (
+              <PilotUnlockStepsPanel guide={selectedPilotUnlockGuide} />
+            ) : null}
+
             {selectedPilot &&
             supplementalBlockingEntries(selectedPilot).length > 0 ? (
               <div>
@@ -1109,6 +1157,17 @@ function PilotListRow({
                 <li>+{pilot.blockers.length - 3} more</li>
               ) : null}
             </ul>
+          ) : null}
+          {!isBuildableStatus(pilot.status) ? (
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              {pilot.status === "blocked_mode"
+                ? "Open blueprint → Steps to unlock (Architecture / MCP graph)."
+                : pilot.status === "blocked_checks"
+                  ? "Open blueprint → Steps to unlock (clear gating checks on Fix)."
+                  : pilot.status === "blocked_dcs_score"
+                    ? "Open blueprint → Steps to unlock (raise Data Consistency score)."
+                    : "Open blueprint → Steps to unlock."}
+            </p>
           ) : null}
         </div>
         {isBuildableStatus(pilot.status) ? (

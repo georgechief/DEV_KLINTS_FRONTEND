@@ -66,7 +66,13 @@ assertNotIncludes(
   fix,
   "src/routes/fix.tsx",
   "target.kind === \"sandbox-mapping\") &&",
-  "sandbox-only mappings do not call AI",
+  "legacy sandbox-mapping kind must not gate AI",
+);
+assertNotIncludes(
+  fix,
+  "src/routes/fix.tsx",
+  "target.kind === \"mapping-only\") &&",
+  "mapping-only targets do not call AI",
 );
 const diagnose = readSrc("src/components/klints/DiagnoseEvidence.tsx");
 const overview = readSrc("src/components/klints/OverviewPanel.tsx");

@@ -1130,7 +1130,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Current state", v: "Awaiting approval" },
       { k: "Source evidence", v: "Shopify · Manago.ai" },
     ],
-    testBadge: "Sandboxed test complete · 3/3 elements mapped · 0 conflicts",
+    testBadge: "Fixture demo (not live writeback proof) · 3/3 elements mapped · 0 conflicts",
     ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-identity": {
@@ -1175,7 +1175,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Audit mode", v: "Append-only · signed log" },
       { k: "Source evidence", v: "Shopify · payment gateway" },
     ],
-    testBadge: "Sandboxed test complete · 100/100 clusters written to sandbox · 0 conflicts",
+    testBadge: "Fixture demo (not live writeback proof) · 100/100 clusters validated in fixture · 0 conflicts",
     ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-margin": {
@@ -1220,7 +1220,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Audit mode", v: "Append-only · signed log" },
       { k: "Source evidence", v: "Manago.ai agent · Shopify" },
     ],
-    testBadge: "Sandboxed test complete · 340 SKUs scored · relevance preserved · 0 below floor",
+    testBadge: "Fixture demo (not live writeback proof) · 340 SKUs scored · relevance preserved · 0 below floor",
     ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-untapped": {
@@ -1308,7 +1308,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Current state", v: "Awaiting approval" },
       { k: "Source evidence", v: "Manago.ai" },
     ],
-    testBadge: "Sandboxed test complete · collision resolved in sandbox · 0 double-sends",
+    testBadge: "Fixture demo (not live writeback proof) · collision resolved in fixture · 0 double-sends",
     ctaLabel: "Proceed to Workflow Studio",
   },
   "iss-sync": {
@@ -1350,7 +1350,7 @@ export const fixPlans: Record<string, FixPlan> = {
       { k: "Current state", v: "Awaiting approval" },
       { k: "Source evidence", v: "Shopify · Manago.ai" },
     ],
-    testBadge: "Sandboxed test complete · hold policy validated · 0 premature fires",
+    testBadge: "Fixture demo (not live writeback proof) · hold policy validated · 0 premature fires",
     ctaLabel: "Proceed to Workflow Studio",
   },
 };
@@ -1602,7 +1602,7 @@ export const qaRuns: QaRun[] = [
       { name: "False-merge guard", desc: "Two distinct people at one address are NOT merged", status: "Passed" },
       { name: "Loyalty history reconciled across merged profiles", desc: "Points and order history consolidated across the cluster", status: "Warning" },
       { name: "Consent inheritance after merge", desc: "Most restrictive consent state inherited across the cluster", status: "Passed" },
-      { name: "Sandboxed writeback validated", desc: "Merge tested against sandboxed target; 0 conflicts", status: "Passed" },
+      { name: "Fixture writeback story", desc: "Merge tested against fixture target; 0 conflicts", status: "Passed" },
     ],
   },
   {
@@ -1745,7 +1745,7 @@ export const handoffPackages: HandoffPackage[] = [
       "VIP re-evaluation trigger",
       "False-merge guard rules",
     ],
-    qaMini: ["Cluster confidence", "False-merge guard", "Consent inheritance", "Sandbox writeback"],
+    qaMini: ["Cluster confidence", "False-merge guard", "Consent inheritance", "Fixture writeback"],
     fields: [
       { key: "Writeback", value: "klints_identity_cluster · both contacts" },
       { key: "QA status", value: "Cleared · QA#39" },

@@ -9,6 +9,8 @@ import { getApiErrorMessage, listConnectors } from "@/lib/connectors";
 import { getCurrentUser } from "@/lib/auth";
 import {
   BUILD_PACKAGE_QUERY_KEY,
+  blockerCheckId,
+  buildPilotUnlockGuide,
   generateBuildPackage,
   getBuildPackage,
   getUseCase,
@@ -24,6 +26,7 @@ import {
   UC_RECOMMENDATIONS_QUERY_KEY,
   UC_STALE_MS,
   type BuildPackageResponse,
+  type PilotUnlockGuide,
   type UseCaseBlocker,
   type UseCaseDetailResponse,
   type UseCasePilotRecommendation,
@@ -65,8 +68,10 @@ function statusChipClass(tone: "ready" | "warn" | "risk" | "muted"): string {
 function blockerHref(blocker: UseCaseBlocker): string | null {
   // DCS-09: supplemental gates are not on the headline worklist.
   if (isSupplementalBlocker(blocker)) return null;
+  // Prefer Fix for gating checks (PRD-REAL-01 Phase C) — including ?issue= on href.
+  const checkId = blockerCheckId(blocker);
+  if (checkId) return `/fix?issue=${checkId}`;
   if (blocker.href) return blocker.href;
-  if (blocker.check_id) return `/data-consistency?issue=${blocker.check_id}`;
   return null;
 }
 
@@ -85,15 +90,23 @@ function BlockerLink({ blocker }: { blocker: UseCaseBlocker }) {
     );
   }
   if (href.startsWith("/fix")) {
-    const issue = blocker.check_id ?? "";
+    const issue = blockerCheckId(blocker) ?? "";
     return (
       <Link to="/fix" search={{ issue }} className="text-primary hover:underline">
         {blocker.detail}
       </Link>
     );
   }
+  if (href === "/lifecycle" || blocker.code === "architecture_mode") {
+    return (
+      <Link to="/lifecycle" className="text-primary hover:underline">
+        {blocker.detail}
+      </Link>
+    );
+  }
   if (href.includes("issue=")) {
-    const issue = href.split("issue=")[1]?.split("&")[0] ?? blocker.check_id ?? "";
+    const issue =
+      href.split("issue=")[1]?.split("&")[0] ?? blockerCheckId(blocker) ?? "";
     return (
       <Link
         to="/data-consistency"
@@ -108,6 +121,99 @@ function BlockerLink({ blocker }: { blocker: UseCaseBlocker }) {
     <Link to={href as "/lifecycle"} className="text-primary hover:underline">
       {blocker.detail}
     </Link>
+  );
+}
+
+/** Primary CTA under blocked gates — surface matches unlock reason (not always DCS). */
+function StudioBlockedPrimaryCta({
+  pilot,
+}: {
+  pilot: UseCasePilotRecommendation;
+}) {
+  if (
+    pilot.status === "blocked_mode" ||
+    pilot.blockers.some(
+      (b) => b.code === "architecture_mode" || b.href === "/lifecycle",
+    )
+  ) {
+    return (
+      <Link
+        to="/lifecycle"
+        className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+      >
+        Open Lifecycle · Architecture <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    );
+  }
+
+  const firstFixId = pilot.blockers
+    .map((b) => blockerCheckId(b))
+    .find((id): id is string => Boolean(id) && !isSupplementalGate(id));
+
+  if (firstFixId) {
+    return (
+      <Link
+        to="/fix"
+        search={{ issue: firstFixId }}
+        className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+      >
+        Open Fix · {firstFixId} <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    );
+  }
+
+  if (pilot.blockers.some((b) => !isSupplementalBlocker(b))) {
+    return (
+      <Link
+        to="/data-consistency"
+        className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
+      >
+        Review Data Consistency <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    );
+  }
+
+  return (
+    <p className="mt-4 text-[12px] text-muted-foreground">
+      Clear pilot supplemental gates to unlock Generate — these checks are not on
+      the Data Center score worklist.
+    </p>
+  );
+}
+
+function StudioUnlockSteps({ guide }: { guide: PilotUnlockGuide }) {
+  return (
+    <div
+      className="mt-4 rounded-md border border-border bg-elevated/50 px-3.5 py-3"
+      role="status"
+      data-testid="studio-steps-to-unlock"
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+        {guide.title}
+      </div>
+      <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-[13px] leading-relaxed text-foreground">
+        {guide.steps.map((step, index) => (
+          <li key={`${index}-${step.text.slice(0, 24)}`}>
+            {step.link ? (
+              <Link
+                to={step.link.to}
+                search={step.link.search ?? {}}
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                {step.text}
+              </Link>
+            ) : (
+              step.text
+            )}
+          </li>
+        ))}
+      </ol>
+      {guide.footnote ? (
+        <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          {guide.footnote}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
@@ -500,19 +606,11 @@ export function WorkflowStudio({ uc, packageId, issue }: WorkflowStudioProps) {
               </ul>
             </div>
           ) : null}
-          {pilot.blockers.some((b) => !isSupplementalBlocker(b)) ? (
-            <Link
-              to="/data-consistency"
-              className="mt-4 inline-flex items-center gap-1 text-sm font-medium text-primary hover:underline"
-            >
-              Review Data Consistency <ArrowRight className="h-3.5 w-3.5" />
-            </Link>
-          ) : (
-            <p className="mt-4 text-[12px] text-muted-foreground">
-              Clear pilot supplemental gates to unlock Generate — these checks are
-              not on the Data Center score worklist.
-            </p>
-          )}
+          <StudioBlockedPrimaryCta pilot={pilot} />
+          {(() => {
+            const guide = buildPilotUnlockGuide(pilot);
+            return guide ? <StudioUnlockSteps guide={guide} /> : null;
+          })()}
         </div>
       ) : null}
 

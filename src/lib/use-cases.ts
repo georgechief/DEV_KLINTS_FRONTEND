@@ -347,6 +347,346 @@ export function pilotStatusTone(
   }
 }
 
+/** PRD-REAL-01 Phase C — deep link for a numbered unlock step. */
+export type PilotUnlockStepLink = {
+  to: "/fix" | "/data-consistency" | "/lifecycle" | "/qa" | "/workflow";
+  search?: { issue?: string; uc?: string; package_id?: string };
+};
+
+export type PilotUnlockStep = {
+  text: string;
+  link?: PilotUnlockStepLink;
+};
+
+export type PilotUnlockGuide = {
+  title: string;
+  steps: PilotUnlockStep[];
+  footnote?: string;
+};
+
+/** Non-PASS gating check ids from blockers + check_results (Phase C unlock lists). */
+function unlockBlockingCheckIds(
+  pilot: Pick<
+    UseCasePilotRecommendation,
+    "blockers" | "gates" | "check_results"
+  >,
+): string[] {
+  const gating = new Set(
+    (pilot.gates?.gating_check_ids ?? [])
+      .map((id) => id.trim().toUpperCase())
+      .filter(Boolean),
+  );
+  const ids = new Set<string>();
+
+  for (const blocker of pilot.blockers ?? []) {
+    const id = blockerCheckId(blocker);
+    if (id) ids.add(id);
+  }
+
+  for (const row of pilot.check_results ?? []) {
+    const id = row.check_id?.trim().toUpperCase();
+    if (!id) continue;
+    if (gating.size > 0 && !gating.has(id)) continue;
+    const result = String(row.result ?? "")
+      .trim()
+      .toUpperCase();
+    if (!result || result === "PASS" || result === "NOT_EVALUATED") continue;
+    ids.add(id);
+  }
+
+  return [...ids].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * PRD-REAL-01 §5.6 / Phase C — Steps to unlock Studio when a pilot is blocked.
+ * Returns null when the pilot is already buildable.
+ */
+export function buildPilotUnlockGuide(
+  pilot: Pick<
+    UseCasePilotRecommendation,
+    | "status"
+    | "blockers"
+    | "gates"
+    | "use_case_id"
+    | "check_results"
+    | "supplemental_status"
+  >,
+): PilotUnlockGuide | null {
+  if (isBuildableStatus(pilot.status)) return null;
+
+  const minDcs = pilot.gates?.min_dcs ?? 70;
+
+  if (pilot.status === "blocked_dcs_score") {
+    const steps: PilotUnlockStep[] = [
+      {
+        text: "Open Data Consistency — treat FAIL / WARN via Fix (Approve or Steps to pass).",
+        link: { to: "/data-consistency" },
+      },
+    ];
+
+    const failing = unlockBlockingCheckIds(pilot).filter(
+      (id) => !isSupplementalGate(id),
+    );
+    for (const id of failing.slice(0, 5)) {
+      steps.push({
+        text: `${id}: open Fix → clear this check (raises the headline score).`,
+        link: { to: "/fix", search: { issue: id } },
+      });
+    }
+
+    steps.push({
+      text: `Re-run Data Consistency Score until headline ≥ ${minDcs} for this pilot.`,
+      link: { to: "/data-consistency" },
+    });
+    steps.push({
+      text: "Return here — status leaves “Needs higher score” when the score clears.",
+    });
+
+    return {
+      title: "Steps to unlock",
+      steps,
+      footnote:
+        "Do not set REQUIRE_* = False to unlock Studio — clear the real score gate.",
+    };
+  }
+
+  if (pilot.status === "blocked_checks") {
+    const checkIds = unlockBlockingCheckIds(pilot);
+
+    const steps: PilotUnlockStep[] = [
+      {
+        text: "Clear each gating check (FAIL → PASS on latest DCS / pilot-gates).",
+      },
+    ];
+
+    for (const id of checkIds.slice(0, 8)) {
+      if (isSupplementalGate(id)) {
+        steps.push({
+          text: `${id}: fix in Manago/Shopify, then re-evaluate pilot gates (supplemental — not on Fix worklist).`,
+        });
+      } else {
+        steps.push({
+          text: `${id}: open Fix → follow Steps to pass or Approve → re-run DCS.`,
+          link: { to: "/fix", search: { issue: id } },
+        });
+      }
+    }
+
+    if (checkIds.length === 0) {
+      const declared = (pilot.gates?.gating_check_ids ?? [])
+        .map((id) => id.trim().toUpperCase())
+        .filter(Boolean)
+        .slice(0, 8);
+      for (const id of declared) {
+        if (isSupplementalGate(id)) {
+          steps.push({
+            text: `${id}: confirm supplemental gate PASS via pilot-gates (not on Fix worklist).`,
+          });
+        } else {
+          steps.push({
+            text: `${id}: open Fix / Data Consistency and clear this gating check.`,
+            link: { to: "/fix", search: { issue: id } },
+          });
+        }
+      }
+    }
+
+    steps.push({
+      text: "Re-run DCS (and pilot-gates if supplementals). Return when blockers clear.",
+      link: { to: "/data-consistency" },
+    });
+
+    return {
+      title: "Steps to unlock",
+      steps,
+      footnote:
+        "Do not set REQUIRE_PILOT_GATING_CHECKS=False — clear real FAIL checks.",
+    };
+  }
+
+  if (pilot.status === "blocked_mode") {
+    const archDetail =
+      pilot.blockers.find((b) => b.code === "architecture_mode")?.detail ?? "";
+    const notFinished = /has not finished/i.test(archDetail);
+    const notAllowed = /not in allowed modes/i.test(archDetail);
+    const allowedModes = (pilot.gates?.architecture_modes ?? [])
+      .map((m) => String(m).trim())
+      .filter(Boolean);
+
+    if (notFinished) {
+      return {
+        title: "Steps to unlock",
+        steps: [
+          {
+            text: "Open Lifecycle and run Architecture Assessment.",
+            link: { to: "/lifecycle" },
+          },
+          {
+            text: "Wait for assessment to finish — Studio stays blocked until AF mode is set.",
+          },
+          {
+            text: "If AF stays INCOMPLETE, connect Manago MCP for workflow_read + segment inventory (graph_complete).",
+            link: { to: "/lifecycle" },
+          },
+        ],
+        footnote:
+          "Do not set REQUIRE_ARCHITECTURE_PILOT_GATES=False to unlock while AF is missing.",
+      };
+    }
+
+    if (notAllowed) {
+      return {
+        title: "Steps to unlock",
+        steps: [
+          {
+            text: "Open Lifecycle and review the current Architecture mode.",
+            link: { to: "/lifecycle" },
+          },
+          {
+            text: archDetail
+              ? `${archDetail}${
+                  allowedModes.length
+                    ? ` This pilot allows: ${allowedModes.join(", ")}.`
+                    : ""
+                }`
+              : `Architecture mode is not allowed for this pilot${
+                  allowedModes.length
+                    ? ` (needs ${allowedModes.join(", ")})`
+                    : ""
+                }.`,
+            link: { to: "/lifecycle" },
+          },
+          {
+            text: "Re-assess Architecture or pick a pilot whose allowed modes match the current AF mode.",
+          },
+        ],
+        footnote:
+          "Do not set REQUIRE_ARCHITECTURE_PILOT_GATES=False to force Generate.",
+      };
+    }
+
+    return {
+      title: "Steps to unlock",
+      steps: [
+        {
+          text: "Open Lifecycle and run / refresh Architecture Assessment.",
+          link: { to: "/lifecycle" },
+        },
+        {
+          text: "Architecture must leave INCOMPLETE: evidence coverage ≥ 0.80 and graph_complete (rich workflow definitions + segments).",
+          link: { to: "/lifecycle" },
+        },
+        {
+          text: "REST workflow list is often shallow — Manago MCP workflow_read + segment inventory are required for a full graph. There is no Generate bypass.",
+        },
+        {
+          text: "When AF mode is allowed for this pilot, return here to open Workflow Studio.",
+        },
+      ],
+      footnote:
+        "Do not set REQUIRE_ARCHITECTURE_PILOT_GATES=False to unlock while AF is INCOMPLETE.",
+    };
+  }
+
+  return {
+    title: "Steps to unlock",
+    steps: [
+      {
+        text: "This pilot is unavailable for the current company context. Confirm connectors and blueprint gates.",
+        link: { to: "/data-consistency" },
+      },
+    ],
+  };
+}
+
+/** PRD-REAL-01 Phase C — Steps when Handoff is blocked on QA. */
+export function buildHandoffQaUnlockGuide(input: {
+  qaNeverRun: boolean;
+  qaRunNotFound: boolean;
+  qaPackageMismatch: boolean;
+  /** Optional hard-test ids still FAIL — listed on QA / Handoff unlock panels. */
+  failedHardTestIds?: string[];
+  /** When set, hard-test fix steps deep-link to Studio for this pilot. */
+  uc?: string;
+  packageId?: string;
+}): PilotUnlockGuide {
+  if (input.qaRunNotFound) {
+    return {
+      title: "Steps to unlock Handoff",
+      steps: [
+        {
+          text: "Open QA and run or select a valid QA run for this package.",
+          link: { to: "/qa" },
+        },
+        {
+          text: "Return to Handoff after QA status is PASS (score ≥ 80, all hard tests).",
+        },
+      ],
+      footnote: "REQUIRE_HANDOFF_QA_PASS=True — demo bypass is off.",
+    };
+  }
+  if (input.qaPackageMismatch) {
+    return {
+      title: "Steps to unlock Handoff",
+      steps: [
+        {
+          text: "Return to QA for the package in the URL and use the latest matching QA result.",
+          link: { to: "/qa" },
+        },
+        { text: "Stage Handoff only after that QA result is PASS." },
+      ],
+    };
+  }
+  if (input.qaNeverRun) {
+    return {
+      title: "Steps to unlock Handoff",
+      steps: [
+        {
+          text: "Run QA in Workflow Studio for this build package.",
+          link: { to: "/qa" },
+        },
+        {
+          text: "Achieve QA PASS (≥80, all hard tests), then return here to stage.",
+        },
+      ],
+      footnote: "Handoff will not stage while QA is FAIL or missing.",
+    };
+  }
+
+  const steps: PilotUnlockStep[] = [
+    {
+      text: "Clear failing hard tests until QA status is PASS (score ≥ 80).",
+      link: { to: "/qa" },
+    },
+  ];
+  const studioSearch =
+    input.uc || input.packageId
+      ? {
+          ...(input.uc ? { uc: input.uc } : {}),
+          ...(input.packageId ? { package_id: input.packageId } : {}),
+        }
+      : undefined;
+  for (const id of (input.failedHardTestIds ?? []).slice(0, 5)) {
+    const clean = id.trim();
+    if (!clean) continue;
+    steps.push({
+      text: `${clean}: fix package evidence in Studio (or regenerate), then re-run QA.`,
+      link: studioSearch
+        ? { to: "/workflow", search: studioSearch }
+        : { to: "/workflow" },
+    });
+  }
+  steps.push({
+    text: "Return to Handoff and stage only after QA PASS.",
+  });
+
+  return {
+    title: "Steps to unlock Handoff",
+    steps,
+    footnote: "Do not set REQUIRE_HANDOFF_QA_PASS=False to open Handoff early.",
+  };
+}
+
 /** Fixture workflow ids from original-designs → live MVP1 pilots (PRD-WF-01 §7.5). */
 export const LEGACY_WORKFLOW_TO_UC: Record<string, string> = {
   "wf-second-purchase": "UC-06B",

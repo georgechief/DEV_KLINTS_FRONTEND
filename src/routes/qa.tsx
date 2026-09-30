@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/klints/primitives";
 import { getApiErrorMessage } from "@/lib/connectors";
 import {
   BUILD_PACKAGE_QUERY_KEY,
+  buildHandoffQaUnlockGuide,
   getBuildPackage,
   getUseCaseRecommendations,
   isHandoffQaRequired,
@@ -507,6 +508,57 @@ function QaPage() {
                   )}
                 </div>
               </div>
+
+              {handoffQaRequired && !qaPassed && qaResult ? (
+                <div
+                  className="mt-4 rounded-md border border-border bg-elevated/60 px-3.5 py-3"
+                  role="status"
+                  data-testid="qa-steps-to-unlock-handoff"
+                >
+                  {(() => {
+                    const unlockGuide = buildHandoffQaUnlockGuide({
+                      qaNeverRun: false,
+                      qaRunNotFound: false,
+                      qaPackageMismatch: false,
+                      failedHardTestIds: failedHardTestIds(qaResult),
+                      uc:
+                        uc ??
+                        qaResult.use_case_id ??
+                        packageQuery.data?.use_case_id,
+                      packageId: packageId,
+                    });
+                    return (
+                      <>
+                        <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+                          {unlockGuide.title}
+                        </div>
+                        <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-[13px] leading-relaxed text-foreground">
+                          {unlockGuide.steps.map((step, index) => (
+                            <li key={`${index}-${step.text.slice(0, 24)}`}>
+                              {step.link ? (
+                                <Link
+                                  to={step.link.to}
+                                  search={step.link.search ?? {}}
+                                  className="text-primary underline-offset-2 hover:underline"
+                                >
+                                  {step.text}
+                                </Link>
+                              ) : (
+                                step.text
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                        {unlockGuide.footnote ? (
+                          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                            {unlockGuide.footnote}
+                          </p>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
+              ) : null}
             </div>
 
             <div className="flow-next">

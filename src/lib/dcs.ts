@@ -2201,6 +2201,125 @@ function describeGenericRecord(
       detail: parts.join(" · "),
     };
   }
+  if (side === "link_key_dangling") {
+    const managoId = asPlainString(rec.manago_contact_id) || asPlainString(rec["manago_contact_id"]);
+    const danglingId =
+      asPlainString(rec.dangling_external_id) ||
+      asPlainString(rec["dangling_external_id"]);
+    const email = asPlainString(rec["person.email"]) || asPlainString(rec.email);
+    const fix =
+      asPlainString(rec.manual_fix) ||
+      "Clear Manago externalId — Shopify customer not found";
+    const parts = [
+      danglingId ? `Bad externalId ${danglingId}` : null,
+      managoId ? `Manago ${managoId}` : null,
+      email ? `Email ${email}` : null,
+      fix,
+    ].filter(Boolean);
+    return {
+      what: "Dangling externalId (manual clear)",
+      detail: parts.join(" · "),
+    };
+  }
+  if (side === "missing_link_key") {
+    const managoId = asPlainString(rec.manago_contact_id);
+    const shopifyId = asPlainString(rec.shopify_customer_id);
+    const email = asPlainString(rec["person.email"]) || asPlainString(rec.email);
+    const parts = [
+      email ? `Email ${email}` : null,
+      managoId ? `Manago ${managoId}` : null,
+      shopifyId ? `Set externalId to Shopify ${shopifyId}` : null,
+    ].filter(Boolean);
+    return {
+      what: "Missing externalId (Approve can backfill)",
+      detail: parts.join(" · ") || "Clean 1:1 email match ready to link",
+    };
+  }
+  if (side === "out_in" || side === "in_out") {
+    const email = asPlainString(rec["person.email"]) || asPlainString(rec.email);
+    const action = asPlainString(rec.proposed_action);
+    const gate = asPlainString(rec.evidence_gate);
+    const channel = asPlainString(rec.channel)?.toLowerCase() ?? "";
+    const what =
+      side === "out_in"
+        ? channel === "sms"
+          ? "Shopify SMS out / Manago in (compliance)"
+          : "Shopify out / Manago in (compliance)"
+        : channel === "sms"
+          ? "Shopify SMS in / Manago out (lost reach)"
+          : "Shopify in / Manago out (lost reach)";
+    const parts = [
+      email ? `Email ${email}` : null,
+      action ? `Action ${action}` : null,
+      gate ? `Gate ${gate}` : null,
+    ].filter(Boolean);
+    return {
+      what,
+      detail: parts.join(" · ") || "Consent quadrant mismatch",
+    };
+  }
+  if (side === "consented_but_unreachable") {
+    const email = asPlainString(rec["person.email"]) || asPlainString(rec.email);
+    const phone = asPlainString(rec["person.phone"]) || asPlainString(rec.phone);
+    const parts = [
+      email ? `Email ${email}` : null,
+      phone ? `Phone ${phone}` : null,
+      "Fix phone / re-permission — not a forcePhoneOpt target",
+    ].filter(Boolean);
+    return {
+      what: "Consented but unreachable phone (CI-09-lite)",
+      detail: parts.join(" · "),
+    };
+  }
+  if (side === "inconsistent_detail_format") {
+    const key = asPlainString(rec.key);
+    const before = asPlainString(rec.value_before) ?? asPlainString(rec.fmt_before);
+    const after = asPlainString(rec.value_after) ?? asPlainString(rec.fmt_after);
+    const action = asPlainString(rec.proposed_action);
+    const parts = [
+      key ? `Key ${key}` : null,
+      before != null && after != null ? `${before} → ${after}` : null,
+      action ? `Action ${action}` : null,
+    ].filter(Boolean);
+    return {
+      what: "Mixed detail format (normalise)",
+      detail: parts.join(" · ") || "Detail format inconsistency",
+    };
+  }
+  if (side === "semantic_duplicate_keys") {
+    const keys = Array.isArray(rec.keys) ? rec.keys.map(String).join(", ") : "";
+    const normalized = asPlainString(rec.normalized);
+    return {
+      what: "Semantic duplicate detail keys (Download only)",
+      detail: [normalized ? `Group ${normalized}` : null, keys || null]
+        .filter(Boolean)
+        .join(" · "),
+    };
+  }
+  if (side === "missing_in_manago") {
+    const id = asPlainString(rec.product_id);
+    const title = asPlainString(rec.shopify_title);
+    return {
+      what: "Product missing in Manago catalog",
+      detail: [id ? `Product ${id}` : null, title ? title : null]
+        .filter(Boolean)
+        .join(" · "),
+    };
+  }
+  if (side === "surplus_in_manago") {
+    const id = asPlainString(rec.product_id);
+    return {
+      what: "Manago catalog surplus (archive candidate)",
+      detail: id ? `Product ${id}` : "Surplus Manago product",
+    };
+  }
+  if (side === "attribute_empty") {
+    const id = asPlainString(rec.product_id);
+    return {
+      what: "Manago product missing name/sku (Download only)",
+      detail: id ? `Product ${id}` : "Empty attributes",
+    };
+  }
 
   const rate = asPlainNumber(rec.duplicate_rate);
   if (rate != null) {

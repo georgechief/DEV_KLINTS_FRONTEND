@@ -17,6 +17,7 @@ import { fixPlans } from "@/lib/klints-data";
 import {
   DCS_WORKLIST_QUERY_KEY,
   dcsWorklistIssueQueryKey,
+  formatCustomerSuggestedFix,
   getDcsWorklist,
   getDcsWorklistIssue,
 } from "@/lib/dcs";
@@ -59,6 +60,8 @@ import {
   writebackApprovalErrorMessage,
   writebackExecuteErrorMessage,
   writebackNonExecutableHonesty,
+  writebackNonExecutableGovHead,
+  writebackNonExecutableStatusLabel,
   writebackPreviewErrorMessage,
   writebackPreviewMeta,
   writebackPreviewToTable,
@@ -72,6 +75,7 @@ import {
   writebackStatusQueryKey,
   writebackIrreversibleHonestyNotice,
   writebackOperatorInfoNotice,
+  writebackCi05EmptyPreviewNotice,
   writebackLimitedRollbackHonesty,
   writebackShopifyMetafieldHonesty,
   writebackApproveWriteConfirmDescription,
@@ -79,6 +83,7 @@ import {
   isWritebackIrreversibleApproveRequired,
   WRITEBACK_REJECTED_BANNER,
   WRITEBACK_DIFF_HASH_MISMATCH_BANNER,
+  WRITEBACK_EXECUTE_ELIGIBLE_FAIL_CLOSED,
   type WritebackPreviewResult,
   type WritebackApprovalToken,
   type WritebackApproveBlockReason,
@@ -155,14 +160,14 @@ export const Route = createFileRoute("/fix")({
 function switchIssueSearch(target: FixTarget): { issue: string } | undefined {
   if (target.kind === "fixture") return { issue: target.issueId };
   if (target.kind === "live") return { issue: target.checkId };
-  if (target.kind === "sandbox-mapping") return { issue: target.checkId };
+  if (target.kind === "mapping-only") return { issue: target.checkId };
   return undefined;
 }
 
 function pageIssueTitle(target: FixTarget): string | null {
   if (target.kind === "fixture") return target.issue.title;
   if (target.kind === "live") return target.plan.title;
-  if (target.kind === "sandbox-mapping") return target.plan.title;
+  if (target.kind === "mapping-only") return target.plan.title;
   return null;
 }
 
@@ -339,7 +344,7 @@ function FixPage() {
     enabled:
       target.kind === "fixture" ||
       target.kind === "live" ||
-      target.kind === "sandbox-mapping",
+      target.kind === "mapping-only",
   });
 
   const checkIdForStudio = fixTargetCheckId(target);
@@ -374,7 +379,7 @@ function FixPage() {
   const issueKey =
     target.kind === "fixture"
       ? target.issueId
-      : target.kind === "live" || target.kind === "sandbox-mapping"
+      : target.kind === "live" || target.kind === "mapping-only"
         ? target.checkId
         : target.kind === "loading"
           ? target.checkId
@@ -506,7 +511,7 @@ function FixPage() {
   const plan: FixPlan | undefined =
     target.kind === "fixture" ||
     target.kind === "live" ||
-    target.kind === "sandbox-mapping"
+    target.kind === "mapping-only"
       ? target.plan
       : undefined;
 
@@ -593,7 +598,14 @@ function FixPage() {
   const requestApprovalDisabledReason =
     requestApprovalBlockReason === "fixture"
       ? "Demo plan · writebacks off"
-      : writebackApproveBlockMessage(requestApprovalBlockReason);
+      : requestApprovalBlockReason === "preview_not_ready" &&
+          writebackCheckId?.toUpperCase() === "CI-05"
+        ? (
+            writebackCi05EmptyPreviewNotice(writebackPreview, writebackCheckId)
+              ?.title ??
+            "No writeable missing keys — reused clusters need CI-03 / Download"
+          )
+        : writebackApproveBlockMessage(requestApprovalBlockReason);
 
   const approveWriteDisabledReason =
     approveWriteBlockReason === "fixture"
@@ -740,7 +752,9 @@ function FixPage() {
               operator_disclosure: null,
               intents: [],
               summary: { ready: 0, skipped: 0, errors: 0, executed: 1 },
-              execute_eligible: { sandbox: true, production: false },
+              execute_eligible:
+                writebackPreview?.execute_eligible ??
+                WRITEBACK_EXECUTE_ELIGIBLE_FAIL_CLOSED,
             };
           });
         }
@@ -958,6 +972,13 @@ function FixPage() {
 
   const nonExecutableHonesty = useMemo(() => {
     if (isFixture || !writebackCapable || !writebackCheckId) return null;
+    const liveIssue =
+      target.kind === "live" ? (issueDetail ?? target.issue) : null;
+    const suggestedFix = liveIssue
+      ? formatCustomerSuggestedFix(liveIssue).trim() ||
+        liveIssue.suggested_fix?.trim() ||
+        null
+      : null;
     return writebackNonExecutableHonesty(
       writebackCheckId,
       writebackPossibleRows,
@@ -965,6 +986,11 @@ function FixPage() {
       {
         possibleLoadError: writebackPossibleError,
         mappingsLoadError: writebackMappingsError,
+      },
+      {
+        suggestedFix,
+        fixOwner: liveIssue?.fix_owner ?? null,
+        fixType: liveIssue?.fix_type ?? null,
       },
     );
   }, [
@@ -975,6 +1001,8 @@ function FixPage() {
     writebackMappingsList,
     writebackPossibleError,
     writebackMappingsError,
+    target,
+    issueDetail,
   ]);
 
   const previewReady =
@@ -1263,7 +1291,10 @@ function FixPage() {
     written
       ? "Data write done — continue to Workflow Studio when ready. Re-score may be needed before Generate unlocks."
       : nonExecutableHonesty || (isLive && !writebackEnabled)
-        ? "Complete evidence or manual fix, then re-run the score. When gates clear, build the workflow brief in Studio."
+        ? nonExecutableHonesty?.surface === "plan_only" ||
+          nonExecutableHonesty?.surface === "preview_gated"
+          ? "Follow Steps to pass below (owner executes outside Approve when needed), then re-run the score. When gates clear, build the workflow brief in Studio."
+          : "Complete evidence or manual fix, then re-run the score. When gates clear, build the workflow brief in Studio."
         : "Once the fix is approved and the score re-checks, Klints builds the workflow brief on validated data — what to build, for which segment.";
 
   function handleRequestApprovalClick() {
@@ -1415,7 +1446,7 @@ function FixPage() {
             <h2>Issue not found</h2>
             <p>
               {target.checkId
-                ? `${target.checkId} is not an open issue on the latest score. It may have been resolved or is no longer FAIL or WARN.`
+                ? `${target.checkId} is not an open issue on the latest score. It may have been resolved or is no longer FAIL/WARN (or CI-05 cold UNKNOWN).`
                 : "That issue could not be found. Pick an open issue from Data Consistency Score."}
             </p>
             <Link
@@ -1924,25 +1955,104 @@ function FixPage() {
                 <div
                   className="mt-[18px] rounded-md border border-border bg-elevated px-3.5 py-3"
                   role="status"
+                  data-testid="writeback-steps-to-pass"
                 >
                   <div className="text-[11px] font-semibold tracking-tight text-foreground">
+                    Cannot auto-write · {writebackCheckId}
+                  </div>
+                  <div className="mt-1 text-[11px] font-semibold tracking-tight text-foreground">
                     {nonExecutableHonesty.title}
                   </div>
-                  <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                  {(nonExecutableHonesty.owner ||
+                    nonExecutableHonesty.fixType) && (
+                    <dl className="mt-2 grid gap-1 text-[12px] leading-relaxed text-muted-foreground sm:grid-cols-2">
+                      {nonExecutableHonesty.owner ? (
+                        <div>
+                          <dt className="text-[10px] font-medium uppercase tracking-[0.06em] text-fog">
+                            Owner
+                          </dt>
+                          <dd className="text-foreground">
+                            {nonExecutableHonesty.owner}
+                          </dd>
+                        </div>
+                      ) : null}
+                      {nonExecutableHonesty.fixType ? (
+                        <div>
+                          <dt className="text-[10px] font-medium uppercase tracking-[0.06em] text-fog">
+                            Fix type
+                          </dt>
+                          <dd className="text-foreground">
+                            {nonExecutableHonesty.fixType}
+                          </dd>
+                        </div>
+                      ) : null}
+                    </dl>
+                  )}
+                  <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+                    <span className="font-medium text-foreground">
+                      Why Approve won’t write:{" "}
+                    </span>
                     {nonExecutableHonesty.detail}
                   </p>
-                  {nonExecutableHonesty.retry ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void refetchWritebackPossible();
-                        void refetchWritebackMappings();
-                      }}
-                      className="mt-2 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
-                    >
-                      Retry
-                    </button>
+                  {nonExecutableHonesty.suggestedFix ? (
+                    <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        What Klints found:{" "}
+                      </span>
+                      {nonExecutableHonesty.suggestedFix}
+                    </p>
                   ) : null}
+                  {nonExecutableHonesty.packSummary ? (
+                    <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        What to do:{" "}
+                      </span>
+                      {nonExecutableHonesty.packSummary}
+                    </p>
+                  ) : null}
+                  {nonExecutableHonesty.steps.length > 0 ? (
+                    <div className="mt-3">
+                      <div className="text-[10px] font-medium uppercase tracking-[0.06em] text-fog">
+                        Steps to pass this check
+                      </div>
+                      <ol className="mt-1.5 list-decimal space-y-1 pl-4 text-[12px] leading-relaxed text-foreground">
+                        {nonExecutableHonesty.steps.map((step, index) => (
+                          <li key={`${index}-${step.slice(0, 24)}`}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {nonExecutableHonesty.retry ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void refetchWritebackPossible();
+                          void refetchWritebackMappings();
+                        }}
+                        className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                      >
+                        Retry
+                      </button>
+                    ) : null}
+                    {liveExportIssue ? (
+                      <button
+                        type="button"
+                        onClick={handleDownloadEvidenceClick}
+                        disabled={
+                          issueDetailPending ||
+                          !canExportEvidence ||
+                          approveInFlight
+                        }
+                        title={evidenceExportDisabledReason}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated px-3 py-1.5 text-xs font-medium text-foreground hover:bg-sand disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Download className="h-3.5 w-3.5 shrink-0" />
+                        {nonExecutableHonesty.downloadLabel ??
+                          "Download evidence"}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               ) : null}
 
@@ -1952,7 +2062,7 @@ function FixPage() {
                     {written
                       ? "Write applied · audit recorded."
                       : nonExecutableHonesty
-                        ? "Evidence only · no automated write from this screen."
+                        ? writebackNonExecutableGovHead(nonExecutableHonesty)
                         : plan.govHead}
                   </strong>
                 </div>
@@ -1980,10 +2090,16 @@ function FixPage() {
                           : livePendingApproval
                           ? "Approval requested · awaiting admin"
                           : nonExecutableHonesty
-                            ? "Evidence only · writeback not available"
+                            ? writebackNonExecutableStatusLabel(
+                                nonExecutableHonesty,
+                              )
                             : previewReady
                               ? "Preview ready · request approval"
-                              : plan.testBadge}
+                              : writebackPreview &&
+                                  writebackCheckId?.toUpperCase() === "CI-05" &&
+                                  (writebackPreview.summary?.ready ?? 0) < 1
+                                ? "No writeable missing keys · reused needs CI-03"
+                                : plan.testBadge}
                 </span>
               </div>
 

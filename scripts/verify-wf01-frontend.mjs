@@ -70,6 +70,32 @@ function testUseCasesClient() {
   assertIncludes(src, "use-cases.ts", "pilotsGatedByCheck", "Fix→Studio gated pilot bridge");
   assertIncludes(src, "use-cases.ts", "parseWorkflowSearch", "workflow search parser");
   assertIncludes(src, "use-cases.ts", 'to: "/workflow"', "workflow studio route");
+  assertIncludes(src, "use-cases.ts", "buildPilotUnlockGuide", "REAL-01 Phase C: pilot unlock steps");
+  assertIncludes(src, "use-cases.ts", "buildHandoffQaUnlockGuide", "REAL-01 Phase C: Handoff QA unlock steps");
+  assertIncludes(
+    src,
+    "use-cases.ts",
+    "graph_complete",
+    "REAL-01 Phase C: Architecture graph_complete in unlock copy",
+  );
+  assertIncludes(
+    src,
+    "use-cases.ts",
+    "REQUIRE_ARCHITECTURE_PILOT_GATES=False",
+    "REAL-01 Phase C: no Flag=False bypass footnote",
+  );
+  assertIncludes(
+    src,
+    "use-cases.ts",
+    "not in allowed modes",
+    "REAL-01 Phase C: blocked_mode distinguishes mode-not-allowed",
+  );
+  assertIncludes(
+    src,
+    "use-cases.ts",
+    "failedHardTestIds",
+    "REAL-01 Phase C: Handoff unlock lists failing hard tests",
+  );
 }
 
 function testWorkflowRoutes() {
@@ -94,6 +120,26 @@ function testWorkflowStudio() {
   assertIncludes(src, "WorkflowStudio.tsx", 'to="/qa"', "QA link with package");
   assertIncludes(src, "WorkflowStudio.tsx", "package_id", "package_id in QA search");
   assertIncludes(src, "WorkflowStudio.tsx", "Gates — build blocked", "blocked state UI");
+  assertIncludes(src, "WorkflowStudio.tsx", "studio-steps-to-unlock", "REAL-01 Phase C: Studio unlock steps");
+  assertIncludes(src, "WorkflowStudio.tsx", "buildPilotUnlockGuide", "REAL-01 Phase C: unlock guide wired");
+  assertIncludes(
+    src,
+    "WorkflowStudio.tsx",
+    "Open Lifecycle · Architecture",
+    "REAL-01 Phase C: blocked_mode CTA → Lifecycle (not DCS)",
+  );
+  assertIncludes(
+    src,
+    "WorkflowStudio.tsx",
+    "Open Fix ·",
+    "REAL-01 Phase C: blocked_checks CTA prefers Fix",
+  );
+  assertIncludes(
+    src,
+    "WorkflowStudio.tsx",
+    "blockerCheckId",
+    "REAL-01 Phase C: Studio deep-links prefer Fix via blockerCheckId",
+  );
   assertIncludes(src, "WorkflowStudio.tsx", "flow-step-fields", "step field chips");
   assertIncludes(src, "WorkflowStudio.tsx", "fieldsByNodeId", "chips survive generate via node_id merge");
   assertIncludes(src, "WorkflowStudio.tsx", "Workflow Klints assembled", "design step heading");
@@ -219,6 +265,15 @@ function testJourneyHonesty() {
   assertIncludes(dcs, "data-consistency.tsx", "Fix this issue", "DCS rows use Fix CTA");
   assertIncludes(opp, "opportunities.tsx", 'to="/workflow"', "Opportunities links to Studio");
   assertIncludes(opp, "opportunities.tsx", "search={{ uc:", "Opportunities uses ?uc=");
+  assertIncludes(opp, "opportunities.tsx", "pilot-steps-to-unlock", "REAL-01 Phase C: Opportunities unlock panel");
+  assertIncludes(opp, "opportunities.tsx", "buildPilotUnlockGuide", "REAL-01 Phase C: unlock guide on Opportunities");
+  assertIncludes(opp, "opportunities.tsx", 'to="/fix"', "REAL-01 Phase C: gating check links to Fix");
+  const handoff = readSrc("src/routes/handoff.tsx");
+  assertIncludes(handoff, "handoff.tsx", "handoff-steps-to-unlock", "REAL-01 Phase C: Handoff QA unlock steps");
+  assertIncludes(handoff, "handoff.tsx", "buildHandoffQaUnlockGuide", "REAL-01 Phase C: Handoff unlock guide wired");
+  const qa = readSrc("src/routes/qa.tsx");
+  assertIncludes(qa, "qa.tsx", "qa-steps-to-unlock-handoff", "REAL-01 Phase C: QA page unlock steps when locked");
+  assertIncludes(qa, "qa.tsx", "buildHandoffQaUnlockGuide", "REAL-01 Phase C: QA unlock guide wired");
   assertIncludes(stepper, "FlowStepper.tsx", "resolveFlowStepperStage", "Build step uses journey resolver");
   assertIncludes(
     ucLib,
