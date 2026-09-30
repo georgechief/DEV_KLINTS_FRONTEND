@@ -169,7 +169,18 @@ function testStaticFiles() {
 
   const livePlan = readSrc("src/lib/fix-live-plan.ts");
   assertIncludes(livePlan, "fix-live-plan.ts", "export function buildLiveFixPlan", "buildLiveFixPlan exported");
-  assertIncludes(livePlan, "fix-live-plan.ts", "Sandboxed test complete · ready for approval", "design test badge");
+  assertIncludes(
+    livePlan,
+    "fix-live-plan.ts",
+    "Run writeback preview before requesting approval",
+    "honest Fix badge (PRD-WB-21 Phase D — not Sandboxed Passed)",
+  );
+  assertNotIncludes(
+    livePlan,
+    "fix-live-plan.ts",
+    "Sandboxed test complete",
+    "no fake Sandboxed Passed badge",
+  );
   assertIncludes(livePlan, "fix-live-plan.ts", "No row-level preview yet", "honest empty preview row");
 
   assertIncludes(livePlan, "fix-live-plan.ts", 'k: "Evidence"', "Evidence kv row in live plan");
@@ -186,13 +197,18 @@ function testStaticFiles() {
   assertIncludes(
     fixPage,
     "fix.tsx",
-    "Writebacks are not enabled yet",
-    "honest writeback copy",
+    "Allow writebacks enabled in Settings",
+    "honest writeback copy points to Settings",
   );
 
   const dc = readSrc("src/routes/data-consistency.tsx");
   assertIncludes(dc, "data-consistency.tsx", 'to="/fix"', "Data Center links to /fix");
-  assertIncludes(dc, "data-consistency.tsx", "search={{ issue: checkId }}", "Data Center passes check_id");
+  assertIncludes(
+    dc,
+    "data-consistency.tsx",
+    "search={{ issue: ctas.primary.checkId }}",
+    "Data Center passes check_id",
+  );
 }
 
 function testLivePlanShape() {
@@ -260,7 +276,7 @@ function mockBuildLiveFixPlan(issue) {
     previewRows: items.length
       ? items.map((item) => [item.locator, item.source, item.value, "observed"])
       : [["—", "—", "—", "No row-level preview yet"]],
-    testBadge: "Sandboxed test complete · ready for approval",
+    testBadge: "Run writeback preview before requesting approval",
     ctaLabel: "Approve fix → Proceed to Workflow Studio",
   };
 }

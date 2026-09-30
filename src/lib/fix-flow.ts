@@ -1,6 +1,6 @@
 import { fixPlans, issues, type FixPlan, type GovernanceIssue } from "@/lib/klints-data";
 import { formatCustomerIssueTitle, type DcsIssue } from "@/lib/dcs";
-import { buildLiveFixPlan, buildSandboxWritebackFixPlan } from "@/lib/fix-live-plan";
+import { buildLiveFixPlan, buildMappingOnlyWritebackFixPlan } from "@/lib/fix-live-plan";
 import { resolveCheckIdFromSearch } from "@/lib/dcs";
 import {
   isWritebackMappingEnabled,
@@ -128,7 +128,8 @@ export type FixTarget =
   | { kind: "fixture"; issueId: string; issue: GovernanceIssue; plan: FixPlan }
   | { kind: "live"; checkId: string; issue: DcsIssue; plan: FixPlan }
   | {
-      kind: "sandbox-mapping";
+      /** Enabled writeback mapping without worklist FAIL (e.g. WB-SHOP-01). */
+      kind: "mapping-only";
       checkId: string;
       mapping: WritebackMappingEntry;
       plan: FixPlan;
@@ -143,12 +144,12 @@ export function fixTargetCheckId(target: FixTarget): string | undefined {
   if (target.kind === "missing") return target.checkId;
   if (target.kind === "loading") return target.checkId;
   if (target.kind === "live") return target.checkId;
-  if (target.kind === "sandbox-mapping") return target.checkId;
+  if (target.kind === "mapping-only") return target.checkId;
   return undefined;
 }
 
 export function isFixTargetWritebackCapable(target: FixTarget): boolean {
-  return target.kind === "live" || target.kind === "sandbox-mapping";
+  return target.kind === "live" || target.kind === "mapping-only";
 }
 
 /**
@@ -194,10 +195,10 @@ export function resolveFixTarget(
   const mapping = findWritebackMapping(writebackMappings, checkId);
   if (mapping && isWritebackMappingEnabled(writebackMappings, checkId)) {
     return {
-      kind: "sandbox-mapping",
+      kind: "mapping-only",
       checkId,
       mapping,
-      plan: buildSandboxWritebackFixPlan(mapping),
+      plan: buildMappingOnlyWritebackFixPlan(mapping),
     };
   }
 

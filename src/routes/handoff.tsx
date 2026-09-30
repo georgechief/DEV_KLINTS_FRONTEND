@@ -65,6 +65,7 @@ import {
 } from "@/lib/handoff";
 import {
   classifyPackageQaGetError,
+  failedHardTestIds,
   getLatestPackageQa,
   getQaRun,
   isQaPass,
@@ -79,6 +80,7 @@ import {
 import {
   BUILD_PACKAGE_QUERY_KEY,
   FLOW_STEPPER_TOOLTIPS,
+  buildHandoffQaUnlockGuide,
   getBuildPackage,
   getUseCaseRecommendations,
   isHandoffQaRequired,
@@ -714,6 +716,14 @@ function HandoffQaBlockedEmpty({
         : qaNeverRun
           ? "QA has not been run for this package yet. Run QA in Workflow Studio, then return here."
           : FLOW_STEPPER_TOOLTIPS.handoffQaLocked);
+  const unlockGuide = buildHandoffQaUnlockGuide({
+    qaNeverRun,
+    qaRunNotFound,
+    qaPackageMismatch,
+    failedHardTestIds: qaResult ? failedHardTestIds(qaResult) : undefined,
+    uc: qaLinkSearch.uc,
+    packageId: qaLinkSearch.package_id,
+  });
 
   return (
     <div className="flow-empty">
@@ -723,6 +733,37 @@ function HandoffQaBlockedEmpty({
       {summary ? (
         <p className="mt-2 text-[13px] font-medium text-risk">{summary}</p>
       ) : null}
+      <div
+        className="mx-auto mt-5 max-w-md rounded-md border border-border bg-elevated/60 px-3.5 py-3 text-left"
+        role="status"
+        data-testid="handoff-steps-to-unlock"
+      >
+        <div className="text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+          {unlockGuide.title}
+        </div>
+        <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-[13px] leading-relaxed text-foreground">
+          {unlockGuide.steps.map((step, index) => (
+            <li key={`${index}-${step.text.slice(0, 24)}`}>
+              {step.link ? (
+                <Link
+                  to={step.link.to}
+                  search={{ ...qaLinkSearch, ...(step.link.search ?? {}) }}
+                  className="text-primary underline-offset-2 hover:underline"
+                >
+                  {step.text}
+                </Link>
+              ) : (
+                step.text
+              )}
+            </li>
+          ))}
+        </ol>
+        {unlockGuide.footnote ? (
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            {unlockGuide.footnote}
+          </p>
+        ) : null}
+      </div>
       <Link
         to="/qa"
         search={qaLinkSearch}
