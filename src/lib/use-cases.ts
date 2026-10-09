@@ -733,7 +733,7 @@ export function pilotsGatedByCheck(
 
 /**
  * PRD-WF-02 §3 — Studio-eligible when the check gates ≥1 MVP1 pilot.
- * Writeback eligibility (Maheep allowlist) is independent — use writebacks.ts.
+ * Writeback eligibility (writeback allowlist) is independent — use writebacks.ts.
  */
 export function isStudioEligibleCheck(
   pilots: UseCasePilotRecommendation[] | undefined,
