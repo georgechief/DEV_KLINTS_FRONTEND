@@ -84,7 +84,7 @@ assertIncludes(packageJson, packageJsonRel, "verify:gap01a", "package.json verif
 
 const beRoot = join(ROOT, "..", "klints_backend");
 const beVerifyPath = join(beRoot, "scripts/verify_orch_sm_01_backend.py");
-const gapsPath = join(beRoot, "docs/sahil/GAP_01_WORKING_GAPS.md");
+const gapsPath = join(beRoot, "docs/ops/GAP_01_WORKING_GAPS.md");
 if (existsSync(beVerifyPath)) pass("BE verify_orch_sm_01_backend.py exists");
 else fail("BE verify_orch_sm_01_backend.py exists");
 if (existsSync(gapsPath)) pass("GAP_01_WORKING_GAPS.md exists");

@@ -351,10 +351,10 @@ if (!rawSendButtons || rawSendButtons.length === 0) {
 console.log("\nStep 11 — §9 Acceptance sweep");
 
 const beRoot = join(ROOT, "..", "klints_backend");
-const gapsRel = "docs/sahil/HO_01_WORKING_GAPS.md";
+const gapsRel = "docs/handoff/HO_01_WORKING_GAPS.md";
 const gapsPath = join(beRoot, gapsRel);
 const gaps = existsSync(gapsPath) ? readFileSync(gapsPath, "utf8") : "";
-const prdPath = join(beRoot, "docs/sahil/PRD_HO_01_HANDOFF_PACKAGE_BIND.md");
+const prdPath = join(beRoot, "docs/handoff/PRD_HO_01_HANDOFF_PACKAGE_BIND.md");
 const prd = existsSync(prdPath) ? readFileSync(prdPath, "utf8") : "";
 const beVerifyPath = join(beRoot, "scripts/verify_ho01_backend.py");
 const qaRel = "src/routes/qa.tsx";

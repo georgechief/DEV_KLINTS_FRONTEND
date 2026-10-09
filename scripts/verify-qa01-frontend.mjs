@@ -402,7 +402,7 @@ console.log("\nQA-01 Step 9 — §12 Acceptance sweep\n");
 const studioRel = "src/components/workflow/WorkflowStudio.tsx";
 const studio = readSrc(studioRel);
 const beRoot = join(ROOT, "..", "klints_backend");
-const gapsRel = "docs/sahil/QA_01_WORKING_GAPS.md";
+const gapsRel = "docs/workflow/QA_01_WORKING_GAPS.md";
 const gapsPath = join(beRoot, gapsRel);
 const gaps = existsSync(gapsPath) ? readFileSync(gapsPath, "utf8") : "";
 const beVerifyRel = "scripts/verify_qa01_backend.py";
