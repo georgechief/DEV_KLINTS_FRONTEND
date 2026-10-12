@@ -400,34 +400,40 @@ function IntegrationsPage() {
                     {isBootstrapPending(dataRefresh) ? (
                       <p className="text-xs text-muted-foreground">Data refresh pending…</p>
                     ) : (
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
-                        <span className="text-muted-foreground">
-                          Run ID{" "}
-                          <span
-                            className="font-mono text-foreground"
-                            title={dataRefresh?.run_id ?? undefined}
-                          >
-                            {shortRunId(dataRefresh?.run_id)}
+                      <div className="space-y-1">
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]">
+                          <span className="text-muted-foreground">
+                            Run ID{" "}
+                            <span
+                              className="font-mono text-foreground"
+                              title={dataRefresh?.run_id ?? undefined}
+                            >
+                              {shortRunId(dataRefresh?.run_id)}
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Contacts{" "}
-                          <span className="tabular font-semibold text-foreground">
-                            {formatDisplayCount(dataRefresh?.contacts ?? 0)}
+                          <span className="text-muted-foreground">
+                            Contacts{" "}
+                            <span className="tabular font-semibold text-foreground">
+                              {formatDisplayCount(dataRefresh?.contacts ?? 0)}
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Orders{" "}
-                          <span className="tabular font-semibold text-foreground">
-                            {formatDisplayCount(dataRefresh?.orders ?? 0)}
+                          <span className="text-muted-foreground">
+                            Orders{" "}
+                            <span className="tabular font-semibold text-foreground">
+                              {formatDisplayCount(dataRefresh?.orders ?? 0)}
+                            </span>
                           </span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          Issues{" "}
-                          <span className="tabular font-semibold text-foreground">
-                            {formatDisplayCount(dataRefresh?.issue_count ?? 0)}
+                          <span className="text-muted-foreground">
+                            Issues{" "}
+                            <span className="tabular font-semibold text-foreground">
+                              {formatDisplayCount(dataRefresh?.issue_count ?? 0)}
+                            </span>
                           </span>
-                        </span>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Counts from the last import window (not lifetime store
+                          totals).
+                        </p>
                       </div>
                     )}
                   </div>
